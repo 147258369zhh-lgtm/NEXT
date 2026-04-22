@@ -1,0 +1,12 @@
+[package]
+name = "nexus-task"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+chrono.workspace = true
+nexus-protocol = { path = "../nexus-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true

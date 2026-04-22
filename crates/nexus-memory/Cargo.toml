@@ -1,0 +1,11 @@
+[package]
+name = "nexus-memory"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+chrono.workspace = true
+nexus-brain = { path = "../nexus-brain" }
+serde.workspace = true
+uuid.workspace = true

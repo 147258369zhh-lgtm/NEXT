@@ -1,0 +1,11 @@
+[package]
+name = "nexus-audit"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+chrono.workspace = true
+nexus-protocol = { path = "../nexus-protocol" }
+uuid.workspace = true
+

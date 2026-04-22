@@ -1,0 +1,13 @@
+[package]
+name = "nexus-store"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+nexus-memory = { path = "../nexus-memory" }
+nexus-protocol = { path = "../nexus-protocol" }
+rusqlite.workspace = true
+uuid.workspace = true

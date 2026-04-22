@@ -1,0 +1,29 @@
+{
+  "default_level": "L2",
+  "rules": [
+    {
+      "level": "L4",
+      "keywords": [
+        "delete",
+        "drop",
+        "shutdown",
+        "transfer",
+        "send money",
+        "deploy",
+        "format",
+        "remove"
+      ]
+    },
+    {
+      "level": "L3",
+      "keywords": [
+        "edit",
+        "modify",
+        "write",
+        "update",
+        "execute",
+        "change"
+      ]
+    }
+  ]
+}

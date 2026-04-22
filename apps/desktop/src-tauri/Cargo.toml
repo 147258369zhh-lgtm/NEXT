@@ -1,0 +1,26 @@
+[package]
+name = "nexus-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "nexus_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.1", features = [] }
+
+[dependencies]
+anyhow.workspace = true
+nexus-audit = { path = "../../../crates/nexus-audit" }
+nexus-brain = { path = "../../../crates/nexus-brain" }
+nexus-memory = { path = "../../../crates/nexus-memory" }
+nexus-protocol = { path = "../../../crates/nexus-protocol" }
+nexus-provider = { path = "../../../crates/nexus-provider" }
+nexus-store = { path = "../../../crates/nexus-store" }
+nexus-task = { path = "../../../crates/nexus-task" }
+serde.workspace = true
+tauri.workspace = true
+tokio.workspace = true
+uuid.workspace = true

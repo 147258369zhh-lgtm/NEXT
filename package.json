@@ -1,0 +1,16 @@
+{
+  "name": "nexus",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @nexus/desktop",
+    "build": "npm run build --workspace @nexus/desktop",
+    "tauri:dev": "npm run tauri dev --workspace @nexus/desktop",
+    "tauri:build": "npm run tauri build --workspace @nexus/desktop"
+  }
+}
+

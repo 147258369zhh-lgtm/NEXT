@@ -1,0 +1,6 @@
+{
+  "providerMode": "mock",
+  "openaiBaseUrl": "https://api.openai.com/v1",
+  "chatModel": "gpt-4.1-mini"
+}
+
