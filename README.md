@@ -32,6 +32,11 @@ NEXT/
 
 The desktop app uses local SQLite by default with a mock provider.
 
+Progress tracking documents:
+
+- architecture notes: `docs/architecture.md`
+- design progress backup: `docs/design-progress-backup.md`
+
 To switch to an OpenAI-compatible provider:
 
 1. Set `NEXUS_PROVIDER_MODE=openai`
