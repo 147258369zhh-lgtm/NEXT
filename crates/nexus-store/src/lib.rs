@@ -96,6 +96,19 @@ impl NexusStore {
         Ok(())
     }
 
+    pub fn list_recent_audits(&self, limit: usize) -> Result<Vec<AuditRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, task_id, event_type, actor, channel, tool_name, risk_level, result, timestamp
+             FROM audit_records ORDER BY timestamp DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit as i64], map_audit_row)?;
+        let mut audits = Vec::new();
+        for row in rows {
+            audits.push(row?);
+        }
+        Ok(audits)
+    }
+
     pub fn insert_approval(&self, approval: &ApprovalRecord) -> Result<()> {
         self.conn.execute(
             "INSERT INTO approvals (id, task_id, action_type, risk_level, reason, payload, status, created_at, expires_at)
@@ -369,6 +382,37 @@ fn map_approval_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalRecord>
         status,
         created_at,
         expires_at,
+    })
+}
+
+fn map_audit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AuditRecord> {
+    use rusqlite::types::Type;
+
+    let id_raw: String = row.get(0)?;
+    let task_id_raw: String = row.get(1)?;
+    let risk_raw: String = row.get(6)?;
+    let timestamp_raw: String = row.get(8)?;
+
+    let id = Uuid::parse_str(&id_raw)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))?;
+    let task_id = Uuid::parse_str(&task_id_raw)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(1, Type::Text, Box::new(err)))?;
+    let risk_level = parse_risk_level(&risk_raw)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(6, Type::Text, Box::new(err)))?;
+    let timestamp = chrono::DateTime::parse_from_rfc3339(&timestamp_raw)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(8, Type::Text, Box::new(err)))?;
+
+    Ok(AuditRecord {
+        id,
+        task_id,
+        event_type: row.get(2)?,
+        actor: row.get(3)?,
+        channel: row.get(4)?,
+        tool_name: row.get(5)?,
+        risk_level,
+        result: row.get(7)?,
+        timestamp,
     })
 }
 

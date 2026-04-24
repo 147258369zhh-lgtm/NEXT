@@ -151,6 +151,22 @@ textarea {
   flex-wrap: wrap;
 }
 
+.view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 14px;
+  background: rgba(236, 242, 251, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.84);
+}
+
+.view-switch button {
+  min-height: 30px;
+  padding: 0 12px;
+  box-shadow: none;
+}
+
 .metric-chip {
   display: inline-flex;
   align-items: center;
@@ -449,6 +465,16 @@ h2 {
   gap: 12px;
 }
 
+.control-board {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.control-span-full {
+  grid-column: 1 / -1;
+}
+
 .workspace-card {
   border-radius: 18px;
   padding: 14px;
@@ -458,14 +484,149 @@ h2 {
 }
 
 .workspace-task,
-.step-list {
+.step-list,
+.control-grid,
+.module-inventory,
+.audit-list {
   display: grid;
   gap: 8px;
+}
+
+.workspace-result,
+.workspace-activity,
+.workspace-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.control-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.control-stat,
+.inventory-item,
+.control-placeholder {
+  border-radius: 14px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.46);
+  padding: 12px;
+}
+
+.control-stat {
+  display: grid;
+  gap: 6px;
+}
+
+.control-stat span,
+.inventory-copy span,
+.control-placeholder p {
+  color: var(--ink-1);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.control-stat strong,
+.inventory-copy strong,
+.control-placeholder strong {
+  font-size: 13px;
+}
+
+.inventory-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.audit-item {
+  border-radius: 14px;
+  border: 1px solid var(--line-soft);
+  background: rgba(255, 255, 255, 0.46);
+  padding: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.audit-copy,
+.audit-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.audit-copy span,
+.audit-meta span,
+.audit-item p {
+  color: var(--ink-1);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.browser-audit {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(241, 247, 255, 0.52)),
+    radial-gradient(320px 120px at 100% 0%, rgba(96, 158, 255, 0.08), transparent 65%);
+}
+
+.audit-item p {
+  margin: 0;
+}
+
+.inventory-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.control-placeholder {
+  display: grid;
+  gap: 6px;
+}
+
+.control-placeholder p {
+  margin: 0;
 }
 
 .workspace-task strong,
 .step-copy strong {
   font-size: 13px;
+}
+
+.workspace-summary,
+.workspace-result p,
+.activity-item p {
+  margin: 0;
+  line-height: 1.5;
+  color: var(--ink-0);
+}
+
+.workspace-result {
+  border-radius: 14px;
+  border: 1px solid var(--line-soft);
+  background: var(--panel-muted);
+  padding: 12px;
+}
+
+.activity-item {
+  display: grid;
+  gap: 4px;
+  border-radius: 14px;
+  border: 1px solid var(--line-soft);
+  background: var(--panel-muted);
+  padding: 12px;
+}
+
+.action-item {
+  border-radius: 14px;
+  border: 1px solid var(--line-soft);
+  background: var(--panel-muted);
+  padding: 12px;
+}
+
+.activity-item span {
+  font-size: 11px;
+  color: var(--ink-1);
 }
 
 .workspace-empty {
@@ -728,6 +889,11 @@ button:disabled {
   .workspace-board {
     grid-template-columns: 1fr;
   }
+
+  .control-board,
+  .control-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -751,6 +917,15 @@ button:disabled {
 
   .chat-stage {
     padding: 14px;
+  }
+
+  .view-switch {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .view-switch button {
+    flex: 1;
   }
 
   h1 {

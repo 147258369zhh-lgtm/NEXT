@@ -108,6 +108,114 @@ pub fn memory_context_loaded(task_id: Uuid, cards: usize) -> AuditRecord {
     )
 }
 
+pub fn executor_dispatched(task_id: Uuid, executor: &str, route: &str) -> AuditRecord {
+    audit(
+        task_id,
+        "executor.dispatched",
+        "runtime",
+        "desktop",
+        Some(executor.to_owned()),
+        RiskLevel::L2,
+        &format!("executor selected for route: {route}"),
+    )
+}
+
+pub fn browser_executor_prepared(task_id: Uuid, detail: &str) -> AuditRecord {
+    audit(
+        task_id,
+        "browser.prepared",
+        "browser-executor",
+        "desktop",
+        Some("browser-executor".to_owned()),
+        RiskLevel::L3,
+        detail,
+    )
+}
+
+pub fn browser_extraction_saved(task_id: Uuid, detail: &str) -> AuditRecord {
+    audit(
+        task_id,
+        "browser.extracted",
+        "browser-executor",
+        "desktop",
+        Some("browser-executor".to_owned()),
+        RiskLevel::L2,
+        detail,
+    )
+}
+
+pub fn dev_executor_prepared(task_id: Uuid, detail: &str) -> AuditRecord {
+    audit(
+        task_id,
+        "dev.prepared",
+        "dev-executor",
+        "desktop",
+        Some("dev-executor".to_owned()),
+        RiskLevel::L2,
+        detail,
+    )
+}
+
+pub fn dev_plan_saved(task_id: Uuid, detail: &str) -> AuditRecord {
+    audit(
+        task_id,
+        "dev.planned",
+        "dev-executor",
+        "desktop",
+        Some("dev-executor".to_owned()),
+        RiskLevel::L2,
+        detail,
+    )
+}
+
+pub fn dev_verification_saved(task_id: Uuid, detail: &str) -> AuditRecord {
+    audit(
+        task_id,
+        "dev.verified",
+        "dev-executor",
+        "desktop",
+        Some("dev-executor".to_owned()),
+        RiskLevel::L2,
+        detail,
+    )
+}
+
+pub fn dev_patch_schema_saved(task_id: Uuid, schema_json: &str) -> AuditRecord {
+    audit(
+        task_id,
+        "dev.patch_schema",
+        "dev-executor",
+        "desktop",
+        Some("dev-executor".to_owned()),
+        RiskLevel::L2,
+        schema_json,
+    )
+}
+
+pub fn dev_runner_saved(task_id: Uuid, detail: &str) -> AuditRecord {
+    audit(
+        task_id,
+        "dev.runner",
+        "patch-runner",
+        "desktop",
+        Some("patch-runner".to_owned()),
+        RiskLevel::L2,
+        detail,
+    )
+}
+
+pub fn dev_runner_log_saved(task_id: Uuid, detail: &str) -> AuditRecord {
+    audit(
+        task_id,
+        "dev.runner_log",
+        "patch-runner",
+        "desktop",
+        Some("patch-runner".to_owned()),
+        RiskLevel::L2,
+        detail,
+    )
+}
+
 fn audit(
     task_id: Uuid,
     event_type: &str,

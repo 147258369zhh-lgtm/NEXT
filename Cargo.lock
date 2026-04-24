@@ -1980,21 +1980,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexus-browser"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "nexus-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nexus-desktop"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "nexus-browser",
+ "nexus-exec",
+ "nexus-memory",
+ "nexus-protocol",
+ "nexus-provider",
+ "serde",
+ "tauri",
+ "tauri-build",
+ "tokio",
+]
+
+[[package]]
+name = "nexus-dev"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "nexus-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nexus-exec"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "nexus-audit",
  "nexus-brain",
+ "nexus-browser",
+ "nexus-dev",
  "nexus-memory",
  "nexus-protocol",
  "nexus-provider",
  "nexus-store",
  "nexus-task",
  "serde",
- "tauri",
- "tauri-build",
- "tokio",
  "uuid",
 ]
 

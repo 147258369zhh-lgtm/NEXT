@@ -36,6 +36,8 @@ Progress tracking documents:
 
 - architecture notes: `docs/architecture.md`
 - design progress backup: `docs/design-progress-backup.md`
+- long-lived development targets: `docs/development-targets.md`
+- reuse and borrow plan: `docs/reuse-plan.md`
 
 To switch to an OpenAI-compatible provider:
 
@@ -71,3 +73,31 @@ Brain and memory modules are now runtime-pluggable:
 - inspect module toggles via `get_module_status`
 - executor dispatch now routes `chat` / `task_execution` / `approval_decision`
 - recent memory is injected into provider prompts when the memory module is enabled
+
+Current structural direction:
+
+- UI is expected to change significantly later
+- core runtime should remain outside the UI layer
+- executor and provider families should be pluggable by default
+- provider families are being expanded beyond chat toward STT/TTS/realtime-style interfaces
+
+Browser runtime slot:
+
+- default env: `NEXUS_BROWSER_RUNTIME=scaffold`
+- Playwright-capable slot: `NEXUS_BROWSER_RUNTIME=playwright-cli`
+- external command bridge:
+  - `NEXUS_BROWSER_CLI_COMMAND=...`
+  - `NEXUS_BROWSER_CLI_ARGS=["..."]`
+- repository-local bridge worker:
+  - script: `infra/scripts/browser-bridge.mjs`
+  - helper command: `npm run browser:bridge -- --spec-json "{...}"`
+  - Windows-safe alternative: set `NEXUS_BROWSER_SPEC_JSON` and then run `npm run browser:bridge`
+  - example configuration is already reflected in `infra/configs/app.example.json`
+  - optional real browser path: set `NEXUS_BROWSER_BRIDGE_MODE=playwright`
+
+Playwright bridge status:
+
+- the repository now includes the `playwright` package
+- the browser bridge worker can run in:
+  - scaffold fallback mode
+  - real Playwright mode when `NEXUS_BROWSER_BRIDGE_MODE=playwright`

@@ -5,9 +5,70 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-pub trait ChatProvider: Send + Sync {
-    fn name(&self) -> &'static str;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ProviderFamily {
+    Chat,
+    Stt,
+    Tts,
+    Realtime,
+    Embedding,
+}
+
+impl ProviderFamily {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Stt => "stt",
+            Self::Tts => "tts",
+            Self::Realtime => "realtime",
+            Self::Embedding => "embedding",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderDescriptor {
+    pub id: String,
+    pub family: ProviderFamily,
+    pub vendor: String,
+    pub title: String,
+    pub local_first: bool,
+    pub enabled: bool,
+}
+
+pub trait ProviderBase: Send + Sync {
+    fn id(&self) -> &'static str;
+    fn vendor(&self) -> &'static str;
+    fn family(&self) -> ProviderFamily;
+    fn name(&self) -> &'static str {
+        self.id()
+    }
+    fn local_first(&self) -> bool {
+        false
+    }
+
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            id: self.id().to_owned(),
+            family: self.family(),
+            vendor: self.vendor().to_owned(),
+            title: self.id().to_owned(),
+            local_first: self.local_first(),
+            enabled: true,
+        }
+    }
+}
+
+pub trait ChatProvider: ProviderBase {
     fn reply(&self, prompt: &str) -> Result<String>;
+}
+
+pub trait SttProvider: ProviderBase {
+    fn transcribe_bytes(&self, _audio: &[u8]) -> Result<String>;
+}
+
+pub trait TtsProvider: ProviderBase {
+    fn synthesize_bytes(&self, _text: &str) -> Result<Vec<u8>>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +76,10 @@ pub struct ProviderConfig {
     pub mode: String,
     pub openai_base_url: String,
     pub chat_model: String,
+    pub stt_mode: String,
+    pub tts_mode: String,
+    pub stt_model: String,
+    pub tts_model: String,
 }
 
 impl ProviderConfig {
@@ -26,6 +91,10 @@ impl ProviderConfig {
             chat_model: env::var("NEXUS_CHAT_MODEL")
                 .or_else(|_| env::var("OPENAI_MODEL"))
                 .unwrap_or_else(|_| "gpt-4.1-mini".to_owned()),
+            stt_mode: env::var("NEXUS_STT_MODE").unwrap_or_else(|_| "mock".to_owned()),
+            tts_mode: env::var("NEXUS_TTS_MODE").unwrap_or_else(|_| "mock".to_owned()),
+            stt_model: env::var("NEXUS_STT_MODEL").unwrap_or_else(|_| "local-placeholder".to_owned()),
+            tts_model: env::var("NEXUS_TTS_MODEL").unwrap_or_else(|_| "local-placeholder".to_owned()),
         }
     }
 }
@@ -39,21 +108,151 @@ impl Default for ProviderConfig {
 pub fn build_provider(config: &ProviderConfig) -> Result<Arc<dyn ChatProvider>> {
     match config.mode.to_lowercase().as_str() {
         "openai" | "openai-compatible" => Ok(Arc::new(OpenAiCompatibleProvider::new(config)?)),
-        _ => Ok(Arc::new(MockProvider)),
+        _ => Ok(Arc::new(MockChatProvider)),
     }
 }
 
-pub struct MockProvider;
+pub fn build_stt_provider(config: &ProviderConfig) -> Result<Arc<dyn SttProvider>> {
+    match config.stt_mode.to_lowercase().as_str() {
+        "mock" => Ok(Arc::new(MockSttProvider::new(&config.stt_model))),
+        _ => Ok(Arc::new(MockSttProvider::new(&config.stt_model))),
+    }
+}
 
-impl ChatProvider for MockProvider {
-    fn name(&self) -> &'static str {
+pub fn build_tts_provider(config: &ProviderConfig) -> Result<Arc<dyn TtsProvider>> {
+    match config.tts_mode.to_lowercase().as_str() {
+        "mock" => Ok(Arc::new(MockTtsProvider::new(&config.tts_model))),
+        _ => Ok(Arc::new(MockTtsProvider::new(&config.tts_model))),
+    }
+}
+
+pub fn list_provider_catalog(config: &ProviderConfig) -> Result<Vec<ProviderDescriptor>> {
+    Ok(vec![
+        build_provider(config)?.descriptor(),
+        build_stt_provider(config)?.descriptor(),
+        build_tts_provider(config)?.descriptor(),
+    ])
+}
+
+pub struct MockChatProvider;
+
+impl ProviderBase for MockChatProvider {
+    fn id(&self) -> &'static str {
         "mock-side-brain"
     }
 
+    fn vendor(&self) -> &'static str {
+        "nexus"
+    }
+
+    fn family(&self) -> ProviderFamily {
+        ProviderFamily::Chat
+    }
+
+    fn local_first(&self) -> bool {
+        true
+    }
+}
+
+impl ChatProvider for MockChatProvider {
     fn reply(&self, prompt: &str) -> Result<String> {
         Ok(format!(
             "Nexus accepted the task:\n{prompt}\n\nThis is a stage-one scaffold response from the local mock provider."
         ))
+    }
+}
+
+pub struct MockSttProvider {
+    model: String,
+}
+
+impl MockSttProvider {
+    fn new(model: &str) -> Self {
+        Self {
+            model: model.to_owned(),
+        }
+    }
+}
+
+impl ProviderBase for MockSttProvider {
+    fn id(&self) -> &'static str {
+        "mock-stt"
+    }
+
+    fn vendor(&self) -> &'static str {
+        "nexus"
+    }
+
+    fn family(&self) -> ProviderFamily {
+        ProviderFamily::Stt
+    }
+
+    fn local_first(&self) -> bool {
+        true
+    }
+
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            id: self.id().to_owned(),
+            family: self.family(),
+            vendor: self.vendor().to_owned(),
+            title: format!("Mock STT ({})", self.model),
+            local_first: true,
+            enabled: true,
+        }
+    }
+}
+
+impl SttProvider for MockSttProvider {
+    fn transcribe_bytes(&self, _audio: &[u8]) -> Result<String> {
+        Ok("[mock stt transcription placeholder]".to_owned())
+    }
+}
+
+pub struct MockTtsProvider {
+    model: String,
+}
+
+impl MockTtsProvider {
+    fn new(model: &str) -> Self {
+        Self {
+            model: model.to_owned(),
+        }
+    }
+}
+
+impl ProviderBase for MockTtsProvider {
+    fn id(&self) -> &'static str {
+        "mock-tts"
+    }
+
+    fn vendor(&self) -> &'static str {
+        "nexus"
+    }
+
+    fn family(&self) -> ProviderFamily {
+        ProviderFamily::Tts
+    }
+
+    fn local_first(&self) -> bool {
+        true
+    }
+
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            id: self.id().to_owned(),
+            family: self.family(),
+            vendor: self.vendor().to_owned(),
+            title: format!("Mock TTS ({})", self.model),
+            local_first: true,
+            enabled: true,
+        }
+    }
+}
+
+impl TtsProvider for MockTtsProvider {
+    fn synthesize_bytes(&self, text: &str) -> Result<Vec<u8>> {
+        Ok(text.as_bytes().to_vec())
     }
 }
 
@@ -82,11 +281,21 @@ impl OpenAiCompatibleProvider {
     }
 }
 
-impl ChatProvider for OpenAiCompatibleProvider {
-    fn name(&self) -> &'static str {
+impl ProviderBase for OpenAiCompatibleProvider {
+    fn id(&self) -> &'static str {
         "openai-compatible"
     }
 
+    fn vendor(&self) -> &'static str {
+        "openai-compatible"
+    }
+
+    fn family(&self) -> ProviderFamily {
+        ProviderFamily::Chat
+    }
+}
+
+impl ChatProvider for OpenAiCompatibleProvider {
     fn reply(&self, prompt: &str) -> Result<String> {
         let url = format!("{}/chat/completions", self.base_url);
         let body = json!({

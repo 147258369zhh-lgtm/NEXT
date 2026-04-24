@@ -2,7 +2,10 @@
 members = [
     "apps/desktop/src-tauri",
     "crates/nexus-audit",
+    "crates/nexus-browser",
     "crates/nexus-brain",
+    "crates/nexus-dev",
+    "crates/nexus-exec",
     "crates/nexus-memory",
     "crates/nexus-protocol",
     "crates/nexus-provider",

@@ -1,6 +1,6 @@
 # Design Progress Backup
 
-Last updated: 2026-04-23
+Last updated: 2026-04-24
 
 Source design document:
 
@@ -32,6 +32,7 @@ Implemented:
 - `apps/desktop`
 - `crates/nexus-audit`
 - `crates/nexus-brain`
+- `crates/nexus-exec`
 - `crates/nexus-memory`
 - `crates/nexus-protocol`
 - `crates/nexus-provider`
@@ -176,6 +177,7 @@ Implemented:
 - audit builders isolated in `nexus-audit`
 - provider abstraction isolated in `nexus-provider`
 - task logic isolated in `nexus-task`
+- runtime orchestration isolated in `nexus-exec`
 - brain and memory as independently toggled modules
 - UI beginning to split into smaller components instead of a single large file
 
@@ -184,6 +186,37 @@ Status judgment:
 - `Done for current phase`
 - this is the strongest part of the current implementation
 - the repo is already moving in the hot-pluggable direction requested in the design document
+
+### 2.10 Runtime boundary extraction
+
+Implemented:
+
+- new `nexus-exec` crate
+- Tauri shell reduced to command adapters and runtime bootstrapping
+- task submission, approval continuation, module toggles, provider prompt assembly, and execution dispatch moved out of `src-tauri`
+- desktop shell now depends on a stable runtime API instead of owning orchestration directly
+
+Status judgment:
+
+- `Done for current phase`
+- this is an important structural step because future UI rewrites should now touch much less backend logic
+
+### 2.11 Executor registration foundation
+
+Implemented:
+
+- executor registry now lives in `nexus-exec`
+- runtime dispatch no longer assumes only one execution path
+- browser executor skeleton is registered as a real non-provider executor
+- executor inventory is visible in the control center
+- browser runtime boundary now exists in `nexus-browser`
+- browser task parsing and runtime mode scaffolding now exist (`silent` / `observe`)
+- browser runtime selection slot now exists (`scaffold` / `playwright-cli`)
+
+Status judgment:
+
+- `Done for current phase`
+- this is an enabling step for browser, dev, voice, and connector executors
 
 ## 3. What is only partially implemented
 
@@ -194,6 +227,8 @@ These areas have started, but only in a narrow or simplified form.
 Current state:
 
 - the current desktop UI already shows module status, approval queue, history, recent memory, current task, and task plan
+- a dedicated control-center view now exists as a separate surface from the main workspace
+- control center now reads runtime status, module inventory, connector/voice placeholders, and recent audit events from backend commands
 
 Missing:
 
@@ -207,7 +242,7 @@ Missing:
 
 Status judgment:
 
-- `Started, but far from spec`
+- `Started, but now structurally aligned`
 
 ### 3.2 Main conversation workspace
 
@@ -302,12 +337,18 @@ Not implemented:
 
 - Playwright-based executor
 - login/session handling
-- browser automation tasks
-- auditable browser execution records
+- full browser automation tasks
 
 Design status:
 
-- `Not started`
+- `Skeleton started`
+
+Additional current note:
+
+- repository-local browser bridge worker now exists
+- Playwright package is installed in the workspace
+- real Playwright navigation path has been validated for a simple open-page flow
+- structured extraction path now returns title, resolved url, content snippet, and link sample for simple information tasks
 
 ### 4.5 Light development loop
 
@@ -445,3 +486,80 @@ But the repository has **not yet** reached the product scope promised by the ori
 The most accurate summary today is:
 
 > Nexus currently has a usable modular desktop prototype and core orchestration foundation, but most of the defining 1.0 capability modules are still waiting to be built.
+
+## 9. Latest progress update
+
+Recent implementation progress after the earlier browser-runtime milestone:
+
+- `nexus-task` now produces more task-shaped plans for browser work, including dedicated step suggestions for login, form-fill, extraction, and generic browser tasks.
+- The desktop workspace now surfaces the current task result summary instead of only task title and plan steps.
+- The desktop workspace now includes a lightweight "latest activity" panel fed by recent browser audit events so the UI shows execution traces instead of looking like a plain chat shell.
+- The browser extraction path is now easier to inspect from both the control center and the workspace because structured browser audits are shown in two places.
+- The Chinese desktop copy bundle was rewritten with clean text instead of inherited garbled strings.
+- Browser prompt detection in `nexus-exec` was extended with direct Chinese keyword matching so Chinese browser requests route correctly even before later intent upgrades.
+- `nexus-browser` was rewritten into a clean module so browser task parsing is no longer polluted by legacy encoding issues.
+- Login and form-fill browser intents now default to `observe` mode instead of silent mode, so sensitive flows stay inspect-first by default.
+- The repository-local Playwright bridge now returns explicit boundary text for login and form tasks, making it clear that the current runtime inspects structure first and does not auto-submit sensitive actions.
+- Browser execution output now includes structured `boundary` and `recommended_next_actions` fields instead of only a free-text summary.
+- Browser extraction audits now persist the control boundary and next recommended actions, so the desktop workspace and future channel connectors can reuse them without reparsing summaries.
+- Browser task parsing now also produces an explicit `action_phase` (`inspect_only`, `fill_only`, `submit_blocked`) so sensitive flows can be staged instead of treated as one undifferentiated browser action.
+- The desktop workspace now surfaces the latest browser action phase directly, so the prototype already shows whether a browser task is still observing, can fill fields, or is blocked from submission.
+- Browser execution output now carries a `field_plan` list for form-oriented tasks, and the workspace renders it in a dedicated panel.
+- The Playwright bridge now emits `field_plan` data when a page exposes actual form controls, which gives the system a concrete pre-submit action draft instead of only sampled inputs.
+- Browser form inspection now also distinguishes `missing_fields` and `sensitive_fields`, so the runtime can separate ordinary empty inputs from fields that deserve stronger control and approval.
+- The desktop workspace now exposes missing-field and sensitive-field panels directly from browser audit data, which makes the form-risk shape visible without reading raw audit text.
+- The repository now has a dedicated `docs/reuse-plan.md` that records which external projects should be directly reused, which should only influence architecture, and which should remain inspiration only.
+- `nexus-dev` now exists as a dedicated development-task runtime boundary instead of leaving all code-oriented work inside the provider/default execution path.
+- `nexus-exec` now registers a real `dev-executor`, so code tasks have their own dispatch path and audit events.
+- The current development runtime is still scaffold-level, but it is already aligned to the intended borrow strategy: Aider-style patch-first execution and later OpenHands-style repo loops should land in `nexus-dev`, not in the UI shell or generic provider path.
+- `nexus-dev` now returns structured `change_plan` and `verification_plan` output instead of only a generic text summary.
+- `nexus-exec` now persists development planning and verification audits separately, so coding work can evolve toward a richer task loop without collapsing back into the default provider path.
+- `nexus-dev` now also returns structured `patch_targets`, `verification_targets`, and `artifacts`, which moves the coding path closer to a real patch-first execution contract.
+- Development audits now preserve those planning targets, so future UI surfaces, connectors, or task replay flows can inspect code-task intent without reparsing a long summary.
+- `nexus-dev` now extracts `file_targets` and `module_targets` directly from the task text, which makes the code-task path closer to a real repository-aware execution contract.
+- Development planning audits now preserve those targets too, so later replay, connector, or IDE-bridge work can understand which files or modules a coding task was aimed at.
+- The desktop workspace now surfaces `file_targets`, `module_targets`, `artifacts`, and `verification_targets` directly from development-task audits, so code work is no longer hidden inside the control center only.
+- The desktop workspace now also surfaces `patch_targets` and `change_plan`, so development tasks already read like a structured patch-first workbench instead of a plain chat transcript.
+- `nexus-dev` now emits explicit `execution_mode`, `repo_scope`, and `patch_strategy` fields, so later Aider/OpenHands integration can plug into a stable execution contract instead of reshaping the runtime model again.
+- The desktop workspace now shows those three strategy fields directly, so code tasks already expose whether the system is in read-only analysis, patch-ready mode, verification-only mode, or incremental refactor mode.
+- `nexus-dev` now also emits `operation_steps` and `patch_outline`, which means the code-task path is no longer only describing intent and targets; it is starting to describe the actual ordered execution contract a future patch engine can follow.
+- The desktop workspace now surfaces those execution steps and patch outlines, so development tasks read more like a real patch-first workbench and less like a generic result summary.
+- `nexus-dev` now emits a structured `patch_proposal` field, which is the first explicit bridge between high-level task planning and a future real diff generator.
+- The desktop workspace now surfaces that patch proposal directly, so the prototype can show a concrete patch-first recommendation before a real code-editing engine is attached.
+- `nexus-dev` now also emits file- or module-oriented `patch_items`, which makes the patch-first path closer to a real executor contract that can later hand work to a diff generator or bounded worker.
+- The desktop workspace now surfaces those patch items directly, so development tasks can already show concrete edit actions instead of only high-level strategy text.
+- `nexus-dev` now also emits `patch_hunks`, which pushes the patch-first contract one step closer to real diff generation by describing the intended edit block shape inside a target file or module.
+- The desktop workspace now surfaces those patch hunks directly, so the prototype can already show which code block is expected to change before an actual patch engine is attached.
+- `nexus-dev` now also emits `patch_sets`, which groups patch hunks into minimal execution batches and moves the runtime contract closer to a real bounded patch engine.
+- The desktop workspace now surfaces those patch sets directly, so development tasks can already show how future patch execution would be chunked into auditable batches.
+- `nexus-dev` now also emits `patch_contract`, which captures preconditions, apply boundaries, and verification gates for a patch set instead of only describing the patch contents.
+- The desktop workspace now surfaces that patch contract directly, so the prototype already exposes when a future patch engine is allowed to mutate files and what must be verified before completion.
+- `nexus-dev` now emits an explicit `patch_schema_version`, which gives the patch-first contract a stable version boundary before the string-based fields are later upgraded into richer typed objects.
+- The desktop workspace now surfaces that schema version too, so future migrations of the patch plan model can stay auditable across machines and build phases.
+- `nexus-dev` now also exports a typed `PatchPlanSchema` as JSON, so the patch-first path no longer depends only on semicolon-tagged audit strings.
+- Development execution now writes a dedicated `dev.patch_schema` audit event that preserves the structured schema body separately from the lighter `dev.planned` summary.
+- The desktop workspace now reads that dedicated schema audit and shows a compact schema preview card with version, mode, scope, strategy, and patch batch counts.
+- The patch schema has now moved to `dev-patch-schema/v2` and includes explicit `patch_files`, so file-level mutation boundaries can evolve without reshaping the whole contract again.
+- Development planning audits now persist a `patch_files` field alongside patch items, hunks, and sets, and the workspace renders those file-level patch boundaries directly.
+- The development runtime now also emits a batch-oriented `patch_apply_plan`, so patch planning is no longer only about what should change; it also describes preflight, apply, and verify stages for each batch.
+- The workspace now renders that apply plan directly, and the schema preview was corrected to read `schema_version` from the structured audit instead of a stale placeholder key.
+- The patch schema now also carries an explicit `execution_contract`, covering write scope, dry-run preference, approval requirement, and rollback scope before a real patch engine is attached.
+- The desktop workspace now renders that execution contract directly from `dev.planned`, so patch execution boundaries are visible before any file mutation runtime is introduced.
+- The patch schema now also carries an explicit `execution_request`, which turns the patch plan into a closer patch-engine input by defining mode, selected batches, target paths, and verification scope.
+- The desktop workspace now renders that execution request directly, so dry-run patch mode, selected batch IDs, and target path scope are visible before a real runner is attached.
+- `nexus-dev` now also defines a separate patch-runner boundary and ships a first `DryRunPatchRunner`, so patch execution no longer has to be invented inside the runtime itself.
+- The current dry-run runner does not mutate files, but it already consumes the structured execution request and apply plan and emits a runner log, which establishes the place where later real patch engines should attach.
+- The runtime now exposes patch-runner catalog data through `nexus-exec` and Tauri commands instead of forcing the desktop shell to depend on `nexus-dev` directly.
+- The control center now shows a dedicated patch-runner inventory panel, so the current dry-run runner is visible as a first-class modular runtime component rather than an invisible internal detail.
+- Dev execution now also writes a dedicated `dev.runner` audit event, so patch-runner work is tracked separately from generic dev planning and schema storage.
+- The control center now includes a patch-runner activity panel, which makes recent dry-run execution traces visible without digging through the generic audit stream.
+- Dev execution now also writes a structured `dev.runner_log` audit payload, so runner traces are preserved as JSON rather than only as flattened strings.
+- The control center now derives a patch-runner status card from that structured audit, which shows the latest runner id, mode, log count, and most recent log entry.
+- The workspace activity feed now mixes browser and development audit events instead of only showing browser traces, which makes the prototype feel more like one execution desk.
+- The desktop copy bundle was cleaned again and rewritten with stable Chinese and English text so later UI iterations are not building on garbled locale data.
+- Browser and development intent parsing now use clean Chinese keywords again, which restores reliable routing for Chinese prompts after earlier encoding pollution.
+
+Verification after these changes:
+
+- `cargo check`
+- `npm run build --workspace @nexus/desktop`

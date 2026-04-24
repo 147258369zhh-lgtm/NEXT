@@ -1,6 +1,11 @@
 {
   "providerMode": "mock",
   "openaiBaseUrl": "https://api.openai.com/v1",
-  "chatModel": "gpt-4.1-mini"
+  "chatModel": "gpt-4.1-mini",
+  "browserRuntime": "playwright-cli",
+  "browserCliCommand": "node",
+  "browserCliArgs": [
+    "infra/scripts/browser-bridge.mjs"
+  ]
 }
 

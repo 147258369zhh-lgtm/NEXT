@@ -13,14 +13,11 @@ tauri-build = { version = "2.5.1", features = [] }
 
 [dependencies]
 anyhow.workspace = true
-nexus-audit = { path = "../../../crates/nexus-audit" }
-nexus-brain = { path = "../../../crates/nexus-brain" }
+nexus-browser = { path = "../../../crates/nexus-browser" }
 nexus-memory = { path = "../../../crates/nexus-memory" }
-nexus-protocol = { path = "../../../crates/nexus-protocol" }
+nexus-exec = { path = "../../../crates/nexus-exec" }
 nexus-provider = { path = "../../../crates/nexus-provider" }
-nexus-store = { path = "../../../crates/nexus-store" }
-nexus-task = { path = "../../../crates/nexus-task" }
+nexus-protocol = { path = "../../../crates/nexus-protocol" }
 serde.workspace = true
 tauri.workspace = true
 tokio.workspace = true
-uuid.workspace = true

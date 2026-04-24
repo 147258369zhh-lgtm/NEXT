@@ -1,17 +1,25 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ChatWorkspace } from "./components/ChatWorkspace";
+import { ControlCenter } from "./components/ControlCenter";
 import { SideRail } from "./components/SideRail";
 import { Topbar } from "./components/Topbar";
 import { I18N, getInitialLocale } from "./i18n";
 import type {
   ApprovalView,
+  AuditView,
+  BrowserRuntimeDescriptor,
   ChatMessage,
   ChatPayload,
+  ExecutorDescriptor,
   Locale,
+  MainView,
   MemoryView,
   ModuleCardData,
+  ModuleDescriptor,
   ModuleStatus,
+  PatchRunnerDescriptor,
+  ProviderDescriptor,
   SideView,
   TaskView,
   TaskWorkspace
@@ -19,6 +27,7 @@ import type {
 
 export default function App() {
   const [locale, setLocale] = useState<Locale>(getInitialLocale);
+  const [mainView, setMainView] = useState<MainView>("workspace");
   const [sideView, setSideView] = useState<SideView>("modules");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -27,6 +36,7 @@ export default function App() {
   const [recentTasks, setRecentTasks] = useState<TaskView[]>([]);
   const [recentApprovals, setRecentApprovals] = useState<ApprovalView[]>([]);
   const [recentMemory, setRecentMemory] = useState<MemoryView[]>([]);
+  const [recentAudits, setRecentAudits] = useState<AuditView[]>([]);
   const [workspace, setWorkspace] = useState<TaskWorkspace | null>(null);
   const [riskPolicySource, setRiskPolicySource] = useState("loading...");
   const [providerSource, setProviderSource] = useState("loading...");
@@ -35,6 +45,11 @@ export default function App() {
   const [lastBrainRoute, setLastBrainRoute] = useState("boot");
   const [brainEnabled, setBrainEnabled] = useState(true);
   const [memoryEnabled, setMemoryEnabled] = useState(true);
+  const [modules, setModules] = useState<ModuleDescriptor[]>([]);
+  const [executors, setExecutors] = useState<ExecutorDescriptor[]>([]);
+  const [providers, setProviders] = useState<ProviderDescriptor[]>([]);
+  const [browserRuntimes, setBrowserRuntimes] = useState<BrowserRuntimeDescriptor[]>([]);
+  const [patchRunners, setPatchRunners] = useState<PatchRunnerDescriptor[]>([]);
   const [error, setError] = useState<string | null>(null);
   const t = useMemo(() => I18N[locale], [locale]);
 
@@ -62,7 +77,12 @@ export default function App() {
       refreshHistory(),
       refreshRiskPolicySource(),
       refreshProviderSource(),
-      refreshModuleStatus()
+      refreshModuleStatus(),
+      refreshModules(),
+      refreshExecutors(),
+      refreshProviders(),
+      refreshBrowserRuntimes(),
+      refreshPatchRunners()
     ]);
   }
 
@@ -76,15 +96,17 @@ export default function App() {
 
   async function refreshHistory() {
     try {
-      const [tasks, approvals, memoryCardsList, nextWorkspace] = await Promise.all([
+      const [tasks, approvals, memoryCardsList, audits, nextWorkspace] = await Promise.all([
         invoke<TaskView[]>("list_recent_tasks", { limit: 12 }),
         invoke<ApprovalView[]>("list_recent_approvals", { limit: 12 }),
         invoke<MemoryView[]>("list_recent_memory_cards", { limit: 12 }),
+        invoke<AuditView[]>("list_recent_audits", { limit: 18 }),
         invoke<TaskWorkspace | null>("get_latest_workspace")
       ]);
       setRecentTasks(tasks);
       setRecentApprovals(approvals);
       setRecentMemory(memoryCardsList);
+      setRecentAudits(audits);
       setWorkspace(nextWorkspace);
     } catch {
       setError(t.failedLoadHistory);
@@ -111,6 +133,48 @@ export default function App() {
     try {
       const status = await invoke<ModuleStatus>("get_module_status");
       applyModuleStatus(status);
+    } catch {
+      setError(t.failedModuleStatus);
+    }
+  }
+
+  async function refreshModules() {
+    try {
+      setModules(await invoke<ModuleDescriptor[]>("list_modules"));
+    } catch {
+      setError(t.failedModuleStatus);
+    }
+  }
+
+  async function refreshExecutors() {
+    try {
+      setExecutors(await invoke<ExecutorDescriptor[]>("list_executors"));
+    } catch {
+      setError(t.failedModuleStatus);
+    }
+  }
+
+  async function refreshProviders() {
+    try {
+      setProviders(await invoke<ProviderDescriptor[]>("list_providers"));
+    } catch {
+      setError(t.failedProviderSource);
+    }
+  }
+
+  async function refreshBrowserRuntimes() {
+    try {
+      setBrowserRuntimes(
+        await invoke<BrowserRuntimeDescriptor[]>("list_browser_runtimes")
+      );
+    } catch {
+      setError(t.failedModuleStatus);
+    }
+  }
+
+  async function refreshPatchRunners() {
+    try {
+      setPatchRunners(await invoke<PatchRunnerDescriptor[]>("list_patch_runners"));
     } catch {
       setError(t.failedModuleStatus);
     }
@@ -151,6 +215,7 @@ export default function App() {
         enabled
       });
       applyModuleStatus(status);
+      await refreshModules();
     } catch {
       setError(t.moduleToggleFailed);
     } finally {
@@ -291,7 +356,9 @@ export default function App() {
           t={t}
           locale={locale}
           pendingCount={pendingCount}
+          mainView={mainView}
           onLocaleChange={setLocale}
+          onMainViewChange={setMainView}
         />
 
         <section className="chat-layout">
@@ -314,7 +381,33 @@ export default function App() {
           />
 
           <section className="chat-column">
-            <ChatWorkspace t={t} workspace={workspace} messages={messages} />
+            {mainView === "workspace" ? (
+              <ChatWorkspace
+                t={t}
+                workspace={workspace}
+                messages={messages}
+                audits={recentAudits}
+              />
+            ) : (
+              <ControlCenter
+                t={t}
+                moduleStatus={{
+                  provider_source: providerSource,
+                  risk_policy_source: riskPolicySource,
+                  pending_approvals: pendingCount,
+                  memory_cards: memoryCards,
+                  last_brain_route: lastBrainRoute,
+                  brain_enabled: brainEnabled,
+                  memory_enabled: memoryEnabled
+                }}
+                modules={modules}
+                executors={executors}
+                providers={providers}
+                browserRuntimes={browserRuntimes}
+                patchRunners={patchRunners}
+                audits={recentAudits}
+              />
+            )}
 
             <form className="chat-input" onSubmit={sendMessage}>
               <textarea

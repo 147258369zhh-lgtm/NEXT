@@ -15,6 +15,7 @@ pub trait RiskPolicy: Send + Sync {
 }
 
 pub struct KeywordRiskPolicy;
+
 pub struct RuleBasedRiskPolicy {
     default_level: RiskLevel,
     rules: Vec<RiskRule>,
@@ -202,12 +203,24 @@ fn classify_risk(message: &str) -> RiskLevel {
         "format",
         "remove",
     ];
-    let medium_risk_tokens = ["edit", "modify", "write", "update", "change", "execute"];
+    let medium_risk_tokens = [
+        "edit",
+        "modify",
+        "write",
+        "update",
+        "change",
+        "execute",
+        "login",
+        "submit",
+        "fill form",
+    ];
 
     if high_risk_tokens.iter().any(|token| lower.contains(token)) {
         return RiskLevel::L4;
     }
-    if medium_risk_tokens.iter().any(|token| lower.contains(token)) {
+    if contains_raw(message, &["登录", "提交", "填写", "表单"])
+        || medium_risk_tokens.iter().any(|token| lower.contains(token))
+    {
         return RiskLevel::L3;
     }
     RiskLevel::L2
@@ -227,9 +240,10 @@ fn parse_level(raw: &str) -> Result<RiskLevel, String> {
 fn suggest_steps(message: &str) -> Vec<(String, String)> {
     let lower = message.to_lowercase();
 
-    if ["code", "bug", "fix", "implement", "refactor", "开发", "修复", "实现"]
-        .iter()
-        .any(|token| lower.contains(token))
+    if contains_raw(message, &["开发", "修复", "实现"])
+        || ["code", "bug", "fix", "implement", "refactor"]
+            .iter()
+            .any(|token| lower.contains(token))
     {
         return vec![
             (
@@ -247,22 +261,86 @@ fn suggest_steps(message: &str) -> Vec<(String, String)> {
         ];
     }
 
-    if ["browser", "web", "site", "页面", "网页", "浏览器"]
-        .iter()
-        .any(|token| lower.contains(token))
+    if contains_raw(message, &["登录"])
+        || ["login", "sign in"]
+            .iter()
+            .any(|token| lower.contains(token))
+    {
+        return vec![
+            (
+                "Inspect target page".to_owned(),
+                "Open the page, inspect login-related structure, and confirm whether credentials or session state are required.".to_owned(),
+            ),
+            (
+                "Detect form fields".to_owned(),
+                "Identify input fields, submit buttons, and any visible authentication flow before taking action.".to_owned(),
+            ),
+            (
+                "Prepare controlled execution".to_owned(),
+                "Return a structured browser result and hold for the next approved action if the flow becomes sensitive.".to_owned(),
+            ),
+        ];
+    }
+
+    if contains_raw(message, &["表单", "填写"])
+        || ["form", "submit", "fill"]
+            .iter()
+            .any(|token| lower.contains(token))
+    {
+        return vec![
+            (
+                "Inspect form structure".to_owned(),
+                "Determine how many forms and input controls are present on the target page.".to_owned(),
+            ),
+            (
+                "Map required inputs".to_owned(),
+                "Extract visible field hints, placeholder values, and likely submission actions.".to_owned(),
+            ),
+            (
+                "Hold for controlled action".to_owned(),
+                "Return the detected structure first so the next step can be executed under the right approval policy.".to_owned(),
+            ),
+        ];
+    }
+
+    if contains_raw(message, &["抓取", "提取"])
+        || ["extract", "scrape"]
+            .iter()
+            .any(|token| lower.contains(token))
+    {
+        return vec![
+            (
+                "Open and classify page".to_owned(),
+                "Open the target page and detect its basic structure, title, and entry points.".to_owned(),
+            ),
+            (
+                "Extract structured content".to_owned(),
+                "Capture a concise text snippet and representative links from the page.".to_owned(),
+            ),
+            (
+                "Return structured result".to_owned(),
+                "Package the extracted information into a task result that can be audited and reused.".to_owned(),
+            ),
+        ];
+    }
+
+    if contains_raw(message, &["页面", "网页", "浏览器", "网站"])
+        || ["browser", "web", "site", "page"]
+            .iter()
+            .any(|token| lower.contains(token))
     {
         return vec![
             (
                 "Interpret target".to_owned(),
-                "Determine the target site or page and the intended operation.".to_owned(),
+                "Determine the target site or page and the intended browser operation.".to_owned(),
             ),
             (
-                "Execute workflow".to_owned(),
-                "Run the browser interaction and collect the required result.".to_owned(),
+                "Inspect live structure".to_owned(),
+                "Use the browser runtime to collect page shape, form hints, or content targets before doing sensitive actions.".to_owned(),
             ),
             (
-                "Confirm output".to_owned(),
-                "Check whether the action completed and record the final state.".to_owned(),
+                "Return controlled result".to_owned(),
+                "Summarize the browser findings and keep the next action within approval boundaries.".to_owned(),
             ),
         ];
     }
@@ -281,4 +359,8 @@ fn suggest_steps(message: &str) -> Vec<(String, String)> {
             "Generate the answer or action result and prepare follow-up context.".to_owned(),
         ),
     ]
+}
+
+fn contains_raw(message: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| message.contains(needle))
 }

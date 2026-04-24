@@ -1,16 +1,20 @@
 import { Icon } from "./Icon";
-import type { CopyBundle, Locale } from "../types";
+import type { CopyBundle, Locale, MainView } from "../types";
 
 export function Topbar({
   t,
   locale,
   pendingCount,
-  onLocaleChange
+  mainView,
+  onLocaleChange,
+  onMainViewChange
 }: {
   t: CopyBundle;
   locale: Locale;
   pendingCount: number;
+  mainView: MainView;
   onLocaleChange: (locale: Locale) => void;
+  onMainViewChange: (view: MainView) => void;
 }) {
   return (
     <header className="topbar">
@@ -21,6 +25,22 @@ export function Topbar({
       </div>
 
       <div className="topbar-metrics">
+        <div className="view-switch">
+          <button
+            className={mainView === "workspace" ? "active" : ""}
+            type="button"
+            onClick={() => onMainViewChange("workspace")}
+          >
+            {t.workspaceTab}
+          </button>
+          <button
+            className={mainView === "control" ? "active" : ""}
+            type="button"
+            onClick={() => onMainViewChange("control")}
+          >
+            {t.controlTab}
+          </button>
+        </div>
         <span className="metric-chip">
           <Icon name="provider" /> {t.providerLive}
         </span>

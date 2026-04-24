@@ -1,5 +1,6 @@
 export type Locale = "zh-CN" | "en-US";
 export type SideView = "modules" | "history";
+export type MainView = "workspace" | "control";
 
 export type IconName =
   | "modules"
@@ -17,6 +18,7 @@ export type TaskView = {
   title: string;
   status: string;
   risk_level: string;
+  result_summary?: string | null;
   created_at?: string;
 };
 
@@ -36,6 +38,18 @@ export type MemoryView = {
   title: string;
   tags: string[];
   created_at: string;
+};
+
+export type AuditView = {
+  id: string;
+  task_id: string;
+  event_type: string;
+  actor: string;
+  channel: string;
+  tool_name?: string | null;
+  risk_level: string;
+  result: string;
+  timestamp: string;
 };
 
 export type TaskStepView = {
@@ -68,6 +82,46 @@ export type ModuleStatus = {
   memory_enabled: boolean;
 };
 
+export type ModuleDescriptor = {
+  id: string;
+  title: string;
+  hot_swappable: boolean;
+  enabled: boolean;
+};
+
+export type ExecutorDescriptor = {
+  id: string;
+  title: string;
+  route_scope: string[];
+  enabled: boolean;
+};
+
+export type ProviderDescriptor = {
+  id: string;
+  family: "Chat" | "Stt" | "Tts" | "Realtime" | "Embedding" | string;
+  vendor: string;
+  title: string;
+  local_first: boolean;
+  enabled: boolean;
+};
+
+export type BrowserRuntimeDescriptor = {
+  id: string;
+  title: string;
+  engine: string;
+  headless_default: boolean;
+  supports_live_control: boolean;
+  enabled: boolean;
+};
+
+export type PatchRunnerDescriptor = {
+  id: string;
+  title: string;
+  mode: string;
+  mutates_files: boolean;
+  enabled: boolean;
+};
+
 export type ModuleAction = {
   label: string;
   kind?: "danger";
@@ -95,8 +149,28 @@ export type CopyBundle = {
   appTitle: string;
   appSubtitle: string;
   workspaceLabel: string;
+  workspaceTab: string;
+  controlTab: string;
   heroTitle: string;
   heroDesc: string;
+  controlTitle: string;
+  controlDesc: string;
+  controlModuleInventory: string;
+  controlExecutors: string;
+  controlProviders: string;
+  controlBrowserRuntimes: string;
+  controlPatchRunners: string;
+  controlPatchRunnerActivity: string;
+  controlPatchRunnerStatus: string;
+  controlBrowserActivity: string;
+  controlDevActivity: string;
+  controlRuntime: string;
+  controlConnectors: string;
+  controlVoice: string;
+  controlAudit: string;
+  controlPlaceholder: string;
+  hotSwappable: string;
+  nativeSettings: string;
   providerLive: string;
   riskActive: string;
   approvalsCount: string;
@@ -138,8 +212,66 @@ export type CopyBundle = {
   recentApprovals: string;
   recentMemory: string;
   currentTask: string;
+  taskOutcome: string;
+  actionPhase: string;
+  fieldPlan: string;
+  missingFields: string;
+  sensitiveFields: string;
+  nextActions: string;
+  fileTargets: string;
+  moduleTargets: string;
+  executionMode: string;
+  patchSchema: string;
+  patchSchemaPreview: string;
+  repoScope: string;
+  patchStrategy: string;
+  operationSteps: string;
+  patchTargets: string;
+  changePlan: string;
+  patchOutline: string;
+  patchProposal: string;
+  patchFiles: string;
+  patchApplyPlan: string;
+  patchExecutionContract: string;
+  patchExecutionRequest: string;
+  patchItems: string;
+  patchHunks: string;
+  patchSets: string;
+  patchContract: string;
+  artifacts: string;
+  verificationTargets: string;
+  latestActivity: string;
   taskPlan: string;
   noTaskWorkspace: string;
+  noTaskOutcome: string;
+  noActionPhase: string;
+  noFieldPlan: string;
+  noMissingFields: string;
+  noSensitiveFields: string;
+  noNextActions: string;
+  noFileTargets: string;
+  noModuleTargets: string;
+  noExecutionMode: string;
+  noPatchSchema: string;
+  noPatchSchemaPreview: string;
+  noRepoScope: string;
+  noPatchStrategy: string;
+  noOperationSteps: string;
+  noPatchTargets: string;
+  noChangePlan: string;
+  noPatchOutline: string;
+  noPatchProposal: string;
+  noPatchFiles: string;
+  noPatchApplyPlan: string;
+  noPatchExecutionContract: string;
+  noPatchExecutionRequest: string;
+  noPatchItems: string;
+  noPatchHunks: string;
+  noPatchSets: string;
+  noPatchContract: string;
+  noArtifacts: string;
+  noVerificationTargets: string;
+  noActivity: string;
   noTaskHistory: string;
   noApprovalHistory: string;
   noMemoryHistory: string;

@@ -10,7 +10,10 @@
     "dev": "npm run dev --workspace @nexus/desktop",
     "build": "npm run build --workspace @nexus/desktop",
     "tauri:dev": "npm run tauri dev --workspace @nexus/desktop",
-    "tauri:build": "npm run tauri build --workspace @nexus/desktop"
+    "tauri:build": "npm run tauri build --workspace @nexus/desktop",
+    "browser:bridge": "node infra/scripts/browser-bridge.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.59.1"
   }
 }
-

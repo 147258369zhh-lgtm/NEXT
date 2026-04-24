@@ -1,0 +1,19 @@
+[package]
+name = "nexus-exec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+nexus-audit = { path = "../nexus-audit" }
+nexus-browser = { path = "../nexus-browser" }
+nexus-brain = { path = "../nexus-brain" }
+nexus-dev = { path = "../nexus-dev" }
+nexus-memory = { path = "../nexus-memory" }
+nexus-protocol = { path = "../nexus-protocol" }
+nexus-provider = { path = "../nexus-provider" }
+nexus-store = { path = "../nexus-store" }
+nexus-task = { path = "../nexus-task" }
+serde.workspace = true
+uuid.workspace = true
