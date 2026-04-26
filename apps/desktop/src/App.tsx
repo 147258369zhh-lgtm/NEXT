@@ -20,7 +20,10 @@ import type {
   ModuleStatus,
   PatchRunnerDescriptor,
   ProviderDescriptor,
-  SideView,
+  Skill,
+  ConnectorStatus,
+  McpServerDescriptor,
+  MemoryCard,
   TaskView,
   TaskWorkspace
 } from "./types";
@@ -28,7 +31,6 @@ import type {
 export default function App() {
   const [locale, setLocale] = useState<Locale>(getInitialLocale);
   const [mainView, setMainView] = useState<MainView>("workspace");
-  const [sideView, setSideView] = useState<SideView>("modules");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -50,6 +52,9 @@ export default function App() {
   const [providers, setProviders] = useState<ProviderDescriptor[]>([]);
   const [browserRuntimes, setBrowserRuntimes] = useState<BrowserRuntimeDescriptor[]>([]);
   const [patchRunners, setPatchRunners] = useState<PatchRunnerDescriptor[]>([]);
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
+  const [mcpServers, setMcpServers] = useState<McpServerDescriptor[]>([]);
   const [error, setError] = useState<string | null>(null);
   const t = useMemo(() => I18N[locale], [locale]);
 
@@ -82,7 +87,10 @@ export default function App() {
       refreshExecutors(),
       refreshProviders(),
       refreshBrowserRuntimes(),
-      refreshPatchRunners()
+      refreshPatchRunners(),
+      refreshSkills(),
+      refreshConnectors(),
+      refreshMcpServers()
     ]);
   }
 
@@ -180,11 +188,38 @@ export default function App() {
     }
   }
 
-  async function reloadRiskPolicy() {
+  async function refreshSkills() {
+    try {
+      setSkills(await invoke<Skill[]>("list_skills"));
+    } catch {
+      setError(t.failedModuleStatus);
+    }
+  }
+
+  async function refreshConnectors() {
+    try {
+      // 模拟数据，待后端指令补齐
+      setConnectors([
+        { id: "webhook-1", name: "Standard Webhook", port: 3333, status: "online" }
+      ]);
+    } catch {
+      setError(t.failedModuleStatus);
+    }
+  }
+
+  async function refreshMcpServers() {
+    try {
+      setMcpServers(await invoke<McpServerDescriptor[]>("list_mcp_servers"));
+    } catch {
+      setError(t.failedModuleStatus);
+    }
+  }
+
+  async function reloadRiskPolicy(level?: string) {
     setLoading(true);
     setError(null);
     try {
-      setRiskPolicySource(await invoke<string>("reload_risk_policy", { path: null }));
+      setRiskPolicySource(await invoke<string>("reload_risk_policy", { path: level || null }));
       await refreshModuleStatus();
     } catch {
       setError(t.riskReloadFailed);
@@ -289,66 +324,6 @@ export default function App() {
     }
   }
 
-  const moduleCards: ModuleCardData[] = [
-    {
-      id: "risk-policy",
-      title: t.riskPolicy,
-      subtitle: t.riskPolicySub,
-      detail: riskPolicySource,
-      icon: "risk",
-      actions: [{ label: t.reload, onClick: () => void reloadRiskPolicy() }]
-    },
-    {
-      id: "provider",
-      title: t.providerModule,
-      subtitle: t.providerSub,
-      detail: providerSource,
-      icon: "provider",
-      actions: [
-        { label: t.useMock, onClick: () => void reloadProvider("mock") },
-        { label: t.useOpenai, onClick: () => void reloadProvider("openai") }
-      ]
-    },
-    {
-      id: "approvals",
-      title: t.approvalQueue,
-      subtitle: pendingCount > 0 ? t.approvalSubAttention : t.approvalSubHealthy,
-      detail: `${pendingCount} ${t.pendingCountText}`,
-      icon: "approval",
-      actions: [{ label: t.refresh, onClick: () => void refreshApprovals() }]
-    },
-    {
-      id: "brain",
-      title: t.brainKernel,
-      subtitle: t.brainSub,
-      detail: `${t.lastRoutePrefix}: ${lastBrainRoute}`,
-      icon: "brain",
-      enabled: brainEnabled,
-      actions: [
-        {
-          label: brainEnabled ? t.disable : t.enable,
-          onClick: () => void toggleModule("brain", !brainEnabled)
-        },
-        { label: t.refresh, onClick: () => void refreshModuleStatus() }
-      ]
-    },
-    {
-      id: "memory",
-      title: t.memoryModule,
-      subtitle: t.memorySub,
-      detail: `${memoryCards} ${t.memoryCardsCount}`,
-      icon: "memory",
-      enabled: memoryEnabled,
-      actions: [
-        {
-          label: memoryEnabled ? t.disable : t.enable,
-          onClick: () => void toggleModule("memory", !memoryEnabled)
-        },
-        { label: t.refresh, onClick: () => void refreshModuleStatus() }
-      ]
-    }
-  ];
-
   return (
     <main className="app-shell">
       <section className="window-shell">
@@ -365,14 +340,11 @@ export default function App() {
           <SideRail
             t={t}
             locale={locale}
-            sideView={sideView}
             loading={loading}
-            moduleCards={moduleCards}
             pendingApprovals={pendingApprovals}
             recentTasks={recentTasks}
             recentApprovals={recentApprovals}
             recentMemory={recentMemory}
-            onSideViewChange={setSideView}
             onRefreshApprovals={() => void refreshApprovals()}
             onRefreshHistory={() => void refreshHistory()}
             onApproval={(approvalId, approved) =>
@@ -405,7 +377,15 @@ export default function App() {
                 providers={providers}
                 browserRuntimes={browserRuntimes}
                 patchRunners={patchRunners}
+                skills={skills}
+                connectors={connectors}
+                mcpServers={mcpServers}
+                memoryCards={recentMemory as any}
                 audits={recentAudits}
+                onReloadRiskPolicy={(level) => void reloadRiskPolicy(level)}
+                onReloadProvider={(mode) => void reloadProvider(mode)}
+                onToggleModule={(mod, en) => void toggleModule(mod, en)}
+                loading={loading}
               />
             )}
 

@@ -1,7 +1,7 @@
 use std::{env, sync::Arc, time::Duration};
-
+use async_trait::async_trait;
 use anyhow::{Context, Result, anyhow};
-use reqwest::blocking::Client;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -59,8 +59,9 @@ pub trait ProviderBase: Send + Sync {
     }
 }
 
+#[async_trait::async_trait]
 pub trait ChatProvider: ProviderBase {
-    fn reply(&self, prompt: &str) -> Result<String>;
+    async fn reply(&self, prompt: &str) -> Result<String>;
 }
 
 pub trait SttProvider: ProviderBase {
@@ -75,7 +76,9 @@ pub trait TtsProvider: ProviderBase {
 pub struct ProviderConfig {
     pub mode: String,
     pub openai_base_url: String,
-    pub chat_model: String,
+    pub api_key: String,
+    pub main_model: String,
+    pub sub_model: String,
     pub stt_mode: String,
     pub tts_mode: String,
     pub stt_model: String,
@@ -88,9 +91,12 @@ impl ProviderConfig {
             mode: env::var("NEXUS_PROVIDER_MODE").unwrap_or_else(|_| "mock".to_owned()),
             openai_base_url: env::var("OPENAI_BASE_URL")
                 .unwrap_or_else(|_| "https://api.openai.com/v1".to_owned()),
-            chat_model: env::var("NEXUS_CHAT_MODEL")
+            api_key: env::var("OPENAI_API_KEY").unwrap_or_default(),
+            main_model: env::var("NEXUS_MAIN_MODEL")
                 .or_else(|_| env::var("OPENAI_MODEL"))
-                .unwrap_or_else(|_| "gpt-4.1-mini".to_owned()),
+                .unwrap_or_else(|_| "gpt-4o".to_owned()),
+            sub_model: env::var("NEXUS_SUB_MODEL")
+                .unwrap_or_else(|_| "gpt-4o-mini".to_owned()),
             stt_mode: env::var("NEXUS_STT_MODE").unwrap_or_else(|_| "mock".to_owned()),
             tts_mode: env::var("NEXUS_TTS_MODE").unwrap_or_else(|_| "mock".to_owned()),
             stt_model: env::var("NEXUS_STT_MODEL").unwrap_or_else(|_| "local-placeholder".to_owned()),
@@ -154,8 +160,9 @@ impl ProviderBase for MockChatProvider {
     }
 }
 
+#[async_trait]
 impl ChatProvider for MockChatProvider {
-    fn reply(&self, prompt: &str) -> Result<String> {
+    async fn reply(&self, prompt: &str) -> Result<String> {
         Ok(format!(
             "Nexus accepted the task:\n{prompt}\n\nThis is a stage-one scaffold response from the local mock provider."
         ))
@@ -260,15 +267,20 @@ struct OpenAiCompatibleProvider {
     client: Client,
     base_url: String,
     api_key: String,
-    model: String,
+    main_model: String,
+    sub_model: String,
 }
 
 impl OpenAiCompatibleProvider {
     fn new(config: &ProviderConfig) -> Result<Self> {
-        let api_key = env::var("OPENAI_API_KEY")
-            .context("OPENAI_API_KEY is required when NEXUS_PROVIDER_MODE=openai")?;
+        let api_key = if config.api_key.is_empty() {
+            env::var("OPENAI_API_KEY")
+                .context("OPENAI_API_KEY is required when NEXUS_PROVIDER_MODE=openai")?
+        } else {
+            config.api_key.clone()
+        };
         let client = Client::builder()
-            .timeout(Duration::from_secs(60))
+            .timeout(Duration::from_secs(120))
             .build()
             .context("failed to build reqwest client")?;
 
@@ -276,7 +288,8 @@ impl OpenAiCompatibleProvider {
             client,
             base_url: config.openai_base_url.trim_end_matches('/').to_owned(),
             api_key,
-            model: config.chat_model.clone(),
+            main_model: config.main_model.clone(),
+            sub_model: config.sub_model.clone(),
         })
     }
 }
@@ -295,16 +308,32 @@ impl ProviderBase for OpenAiCompatibleProvider {
     }
 }
 
+#[async_trait::async_trait]
 impl ChatProvider for OpenAiCompatibleProvider {
-    fn reply(&self, prompt: &str) -> Result<String> {
+    async fn reply(&self, prompt: &str) -> Result<String> {
+        let is_complex = prompt.len() > 500 || prompt.contains("patch") || prompt.contains("diff") || prompt.contains("code");
+        let model = if is_complex { &self.main_model } else { &self.sub_model };
+        
+        let role_desc = if is_complex {
+            "You are Nexus Main Brain (Architect). Your goal is to analyze complex requests and generate a structured PLAN before execution.
+             Format your response as follows:
+             PLAN:
+             1. [Title] - [Route: browser/dev/skill] - [Detail]
+             2. [Title] - [Route: browser/dev/skill] - [Detail]
+             
+             Then proceed with the logic for the first step. Use 'dev' for code changes and 'browser' for web tasks."
+        } else {
+            "You are Nexus Sub Brain (Executor). Focus on immediate execution and clear reporting."
+        };
+
         let url = format!("{}/chat/completions", self.base_url);
         let body = json!({
-            "model": self.model,
+            "model": model,
             "messages": [
-                {"role": "system", "content": "You are Nexus Side Brain. Be concise and execution-oriented."},
+                {"role": "system", "content": role_desc},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.2
+            "temperature": 0.1
         });
 
         let response = self
@@ -313,19 +342,23 @@ impl ChatProvider for OpenAiCompatibleProvider {
             .bearer_auth(&self.api_key)
             .json(&body)
             .send()
+            .await
             .context("failed to call openai-compatible endpoint")?;
 
         if !response.status().is_success() {
             let status = response.status();
             let text = response
                 .text()
+                .await
                 .unwrap_or_else(|_| "unable to read error body".to_owned());
             return Err(anyhow!("provider request failed: {status} - {text}"));
         }
 
         let value: serde_json::Value = response
             .json()
+            .await
             .context("failed to parse openai-compatible response")?;
+        
         let content = value
             .get("choices")
             .and_then(|choices| choices.get(0))

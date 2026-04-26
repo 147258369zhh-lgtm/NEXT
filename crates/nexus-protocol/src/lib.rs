@@ -97,6 +97,7 @@ pub struct TaskStepRecord {
     pub detail: String,
     pub status: TaskStepStatus,
     pub position: u32,
+    pub route: String,
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
 }

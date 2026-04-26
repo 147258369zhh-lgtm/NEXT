@@ -18,6 +18,9 @@ nexus-memory = { path = "../../../crates/nexus-memory" }
 nexus-exec = { path = "../../../crates/nexus-exec" }
 nexus-provider = { path = "../../../crates/nexus-provider" }
 nexus-protocol = { path = "../../../crates/nexus-protocol" }
+nexus-skill = { path = "../../../crates/nexus-skill" }
+nexus-connector = { path = "../../../crates/nexus-connector" }
+nexus-mcp = { path = "../../../crates/nexus-mcp" }
 serde.workspace = true
 tauri.workspace = true
 tokio.workspace = true

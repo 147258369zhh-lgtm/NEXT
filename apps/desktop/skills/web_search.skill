@@ -1,0 +1,13 @@
+name: Web Search
+version: 1.0.2
+author: Nexus Team
+description: Allows the agent to perform real-time web searches using DuckDuckGo or Google.
+intent: search_web
+execution_mode: browser
+triggers:
+  - "search for"
+  - "look up"
+  - "what is the latest"
+actions:
+  - "browser.navigate"
+  - "browser.extract"

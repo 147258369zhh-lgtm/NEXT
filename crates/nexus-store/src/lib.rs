@@ -201,8 +201,8 @@ impl NexusStore {
     pub fn insert_memory_card(&self, card: &MemoryCard) -> Result<()> {
         let tags = card.tags.join(",");
         self.conn.execute(
-            "INSERT INTO memory_cards (id, task_id, card_type, title, content, tags, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO memory_cards (id, task_id, card_type, title, content, tags, importance, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 card.id.to_string(),
                 card.task_id.to_string(),
@@ -210,6 +210,7 @@ impl NexusStore {
                 card.title,
                 card.content,
                 tags,
+                card.importance,
                 card.created_at.to_rfc3339(),
             ],
         )?;
@@ -218,7 +219,7 @@ impl NexusStore {
 
     pub fn list_recent_memory_cards(&self, limit: usize) -> Result<Vec<MemoryCard>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, task_id, card_type, title, content, tags, created_at
+            "SELECT id, task_id, card_type, title, content, tags, importance, created_at
              FROM memory_cards ORDER BY created_at DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map([limit as i64], map_memory_row)?;
@@ -239,8 +240,8 @@ impl NexusStore {
 
     pub fn insert_task_steps(&self, steps: &[TaskStepRecord]) -> Result<()> {
         let mut stmt = self.conn.prepare(
-            "INSERT INTO task_steps (id, task_id, title, detail, status, position, created_at, completed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO task_steps (id, task_id, title, detail, status, position, route, created_at, completed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         )?;
         for step in steps {
             stmt.execute(params![
@@ -250,6 +251,7 @@ impl NexusStore {
                 step.detail,
                 stringify_task_step_status(&step.status),
                 step.position,
+                step.route,
                 step.created_at.to_rfc3339(),
                 step.completed_at.map(|value| value.to_rfc3339()),
             ])?;
@@ -259,7 +261,7 @@ impl NexusStore {
 
     pub fn list_task_steps(&self, task_id: Uuid) -> Result<Vec<TaskStepRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, task_id, title, detail, status, position, created_at, completed_at
+            "SELECT id, task_id, title, detail, status, position, route, created_at, completed_at
              FROM task_steps WHERE task_id = ?1 ORDER BY position ASC",
         )?;
         let rows = stmt.query_map([task_id.to_string()], map_task_step_row)?;
@@ -462,7 +464,8 @@ fn map_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryCard> {
     let id_raw: String = row.get(0)?;
     let task_id_raw: String = row.get(1)?;
     let tags_raw: String = row.get(5)?;
-    let created_raw: String = row.get(6)?;
+    let importance: u8 = row.get(6)?;
+    let created_raw: String = row.get(7)?;
 
     let id = Uuid::parse_str(&id_raw)
         .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))?;
@@ -470,7 +473,7 @@ fn map_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryCard> {
         .map_err(|err| rusqlite::Error::FromSqlConversionFailure(1, Type::Text, Box::new(err)))?;
     let created_at = chrono::DateTime::parse_from_rfc3339(&created_raw)
         .map(|dt| dt.with_timezone(&chrono::Utc))
-        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(6, Type::Text, Box::new(err)))?;
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(7, Type::Text, Box::new(err)))?;
 
     let tags = tags_raw
         .split(',')
@@ -486,6 +489,7 @@ fn map_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryCard> {
         title: row.get(3)?,
         content: row.get(4)?,
         tags,
+        importance,
         created_at,
     })
 }
@@ -496,8 +500,8 @@ fn map_task_step_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskStepRecord
     let id_raw: String = row.get(0)?;
     let task_id_raw: String = row.get(1)?;
     let status_raw: String = row.get(4)?;
-    let created_raw: String = row.get(6)?;
-    let completed_raw: Option<String> = row.get(7)?;
+    let created_raw: String = row.get(7)?;
+    let completed_raw: Option<String> = row.get(8)?;
 
     let id = Uuid::parse_str(&id_raw)
         .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))?;
@@ -523,6 +527,7 @@ fn map_task_step_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskStepRecord
         detail: row.get(3)?,
         status,
         position: row.get(5)?,
+        route: row.get(6)?,
         created_at,
         completed_at,
     })

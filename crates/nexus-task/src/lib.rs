@@ -148,13 +148,14 @@ impl TaskService {
         steps
             .into_iter()
             .enumerate()
-            .map(|(index, (title, detail))| TaskStepRecord {
+            .map(|(index, (title, detail, route))| TaskStepRecord {
                 id: Uuid::new_v4(),
                 task_id: task.id,
                 title,
                 detail,
                 status: TaskStepStatus::Pending,
                 position: index as u32,
+                route,
                 created_at: now,
                 completed_at: None,
             })
@@ -237,7 +238,7 @@ fn parse_level(raw: &str) -> Result<RiskLevel, String> {
     }
 }
 
-fn suggest_steps(message: &str) -> Vec<(String, String)> {
+fn suggest_steps(message: &str) -> Vec<(String, String, String)> {
     let lower = message.to_lowercase();
 
     if contains_raw(message, &["开发", "修复", "实现"])
@@ -249,14 +250,17 @@ fn suggest_steps(message: &str) -> Vec<(String, String)> {
             (
                 "Analyze workspace".to_owned(),
                 "Inspect the current codebase, relevant files, and constraints.".to_owned(),
+                "dev".to_owned(),
             ),
             (
                 "Implement changes".to_owned(),
                 "Apply the required code updates in a limited and auditable scope.".to_owned(),
+                "dev".to_owned(),
             ),
             (
                 "Verify results".to_owned(),
                 "Run checks or builds and summarize the outcome.".to_owned(),
+                "dev".to_owned(),
             ),
         ];
     }
@@ -270,14 +274,17 @@ fn suggest_steps(message: &str) -> Vec<(String, String)> {
             (
                 "Inspect target page".to_owned(),
                 "Open the page, inspect login-related structure, and confirm whether credentials or session state are required.".to_owned(),
+                "browser".to_owned(),
             ),
             (
                 "Detect form fields".to_owned(),
                 "Identify input fields, submit buttons, and any visible authentication flow before taking action.".to_owned(),
+                "browser".to_owned(),
             ),
             (
                 "Prepare controlled execution".to_owned(),
                 "Return a structured browser result and hold for the next approved action if the flow becomes sensitive.".to_owned(),
+                "browser".to_owned(),
             ),
         ];
     }
@@ -291,14 +298,17 @@ fn suggest_steps(message: &str) -> Vec<(String, String)> {
             (
                 "Inspect form structure".to_owned(),
                 "Determine how many forms and input controls are present on the target page.".to_owned(),
+                "browser".to_owned(),
             ),
             (
                 "Map required inputs".to_owned(),
                 "Extract visible field hints, placeholder values, and likely submission actions.".to_owned(),
+                "browser".to_owned(),
             ),
             (
                 "Hold for controlled action".to_owned(),
                 "Return the detected structure first so the next step can be executed under the right approval policy.".to_owned(),
+                "browser".to_owned(),
             ),
         ];
     }
@@ -312,14 +322,17 @@ fn suggest_steps(message: &str) -> Vec<(String, String)> {
             (
                 "Open and classify page".to_owned(),
                 "Open the target page and detect its basic structure, title, and entry points.".to_owned(),
+                "browser".to_owned(),
             ),
             (
                 "Extract structured content".to_owned(),
                 "Capture a concise text snippet and representative links from the page.".to_owned(),
+                "browser".to_owned(),
             ),
             (
                 "Return structured result".to_owned(),
                 "Package the extracted information into a task result that can be audited and reused.".to_owned(),
+                "browser".to_owned(),
             ),
         ];
     }
@@ -333,14 +346,17 @@ fn suggest_steps(message: &str) -> Vec<(String, String)> {
             (
                 "Interpret target".to_owned(),
                 "Determine the target site or page and the intended browser operation.".to_owned(),
+                "browser".to_owned(),
             ),
             (
                 "Inspect live structure".to_owned(),
                 "Use the browser runtime to collect page shape, form hints, or content targets before doing sensitive actions.".to_owned(),
+                "browser".to_owned(),
             ),
             (
                 "Return controlled result".to_owned(),
                 "Summarize the browser findings and keep the next action within approval boundaries.".to_owned(),
+                "browser".to_owned(),
             ),
         ];
     }
@@ -349,14 +365,17 @@ fn suggest_steps(message: &str) -> Vec<(String, String)> {
         (
             "Clarify goal".to_owned(),
             "Interpret the user request and identify the intended deliverable.".to_owned(),
+            "chat".to_owned(),
         ),
         (
             "Plan execution".to_owned(),
             "Select the right module path, constraints, and execution strategy.".to_owned(),
+            "chat".to_owned(),
         ),
         (
             "Produce result".to_owned(),
             "Generate the answer or action result and prepare follow-up context.".to_owned(),
+            "chat".to_owned(),
         ),
     ]
 }

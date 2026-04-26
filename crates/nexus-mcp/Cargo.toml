@@ -1,0 +1,12 @@
+[package]
+name = "nexus-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { version = "1.37", features = ["process", "io-util", "io-std", "macros", "rt", "sync"] }
+uuid.workspace = true

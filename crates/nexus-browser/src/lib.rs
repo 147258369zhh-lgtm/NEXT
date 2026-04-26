@@ -1,4 +1,4 @@
-use std::{env, process::Command};
+use std::{env, path::PathBuf, process::Command};
 
 use anyhow::Result;
 use nexus_protocol::RiskLevel;
@@ -23,13 +23,24 @@ pub struct BrowserRuntimeConfig {
 
 impl BrowserRuntimeConfig {
     pub fn from_env() -> Self {
-        let cli_args = env::var("NEXUS_BROWSER_CLI_ARGS")
+        let cli_args_env = env::var("NEXUS_BROWSER_CLI_ARGS")
             .ok()
-            .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
-            .unwrap_or_default();
+            .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok());
+            
+        let mode = env::var("NEXUS_BROWSER_RUNTIME").unwrap_or_else(|_| "playwright-cli".to_owned());
+        let cli_command = env::var("NEXUS_BROWSER_CLI_COMMAND").ok().or_else(|| Some("node".to_string()));
+        
+        let mut cli_args = cli_args_env.unwrap_or_default();
+        if cli_args.is_empty() && cli_command.as_deref() == Some("node") {
+            // 默认指向内置的 bridge 脚本
+            let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            p.push("playwright_bridge.js");
+            cli_args.push(p.to_string_lossy().to_string());
+        }
+
         Self {
-            mode: env::var("NEXUS_BROWSER_RUNTIME").unwrap_or_else(|_| "scaffold".to_owned()),
-            cli_command: env::var("NEXUS_BROWSER_CLI_COMMAND").ok(),
+            mode,
+            cli_command,
             cli_args,
         }
     }

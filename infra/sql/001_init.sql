@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS memory_cards (
   title TEXT NOT NULL,
   content TEXT NOT NULL,
   tags TEXT NOT NULL,
+  importance REAL NOT NULL DEFAULT 0.5,
   created_at TEXT NOT NULL
 );
 
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS task_steps (
   detail TEXT NOT NULL,
   status TEXT NOT NULL,
   position INTEGER NOT NULL,
+  route TEXT NOT NULL DEFAULT 'chat',
   created_at TEXT NOT NULL,
   completed_at TEXT
 );

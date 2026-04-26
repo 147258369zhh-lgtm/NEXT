@@ -1,4 +1,3 @@
-import { Icon } from "./Icon";
 import type {
   AuditView,
   BrowserRuntimeDescriptor,
@@ -7,9 +6,22 @@ import type {
   ModuleDescriptor,
   ModuleStatus,
   PatchRunnerDescriptor,
-  ProviderDescriptor
+  ProviderDescriptor,
+  Skill,
+  ConnectorStatus,
+  McpServerDescriptor,
+  MemoryCard
 } from "../types";
 
+/**
+ * ControlCenter — Backend settings dashboard.
+ * 
+ * This is where ALL configuration and monitoring lives.
+ * Organized into clear sections:
+ * 1. Runtime Controls (provider, risk, brain, memory toggles)
+ * 2. System Inventory (modules, executors, providers, runtimes, runners)
+ * 3. Activity Logs (audits)
+ */
 export function ControlCenter({
   t,
   moduleStatus,
@@ -18,7 +30,15 @@ export function ControlCenter({
   providers,
   browserRuntimes,
   patchRunners,
-  audits
+  skills,
+  connectors,
+  mcpServers,
+  memoryCards,
+  audits,
+  onReloadRiskPolicy,
+  onReloadProvider,
+  onToggleModule,
+  loading
 }: {
   t: CopyBundle;
   moduleStatus: ModuleStatus;
@@ -27,31 +47,20 @@ export function ControlCenter({
   providers: ProviderDescriptor[];
   browserRuntimes: BrowserRuntimeDescriptor[];
   patchRunners: PatchRunnerDescriptor[];
+  skills: Skill[];
+  connectors: ConnectorStatus[];
+  mcpServers: McpServerDescriptor[];
+  memoryCards: MemoryCard[];
   audits: AuditView[];
+  onReloadRiskPolicy?: (level?: string) => void;
+  onReloadProvider?: (mode: "mock" | "openai") => void;
+  onToggleModule?: (module: "brain" | "memory", enabled: boolean) => void;
+  loading?: boolean;
 }) {
-  const browserAudits = audits.filter((audit) =>
-    audit.event_type.startsWith("browser.")
-  );
-  const devAudits = audits.filter((audit) => audit.event_type.startsWith("dev."));
-  const patchRunnerAudits = audits.filter((audit) => audit.event_type === "dev.runner");
-  const latestPatchRunnerLogAudit = audits.find(
-    (audit) => audit.event_type === "dev.runner_log"
-  );
-  const patchRunnerStatus = extractPatchRunnerStatus(latestPatchRunnerLogAudit?.result);
-
   return (
     <div className="chat-stage">
-      <div className="chat-stage-header">
-        <div className="chat-stage-copy">
-          <span className="eyebrow">
-            <Icon name="modules" /> {t.controlTab}
-          </span>
-          <h1>{t.controlTitle}</h1>
-          <p>{t.controlDesc}</p>
-        </div>
-      </div>
-
       <section className="control-board">
+        {/* ---- Runtime Controls ---- */}
         <article className="workspace-card">
           <div className="panel-header">
             <h2>{t.controlRuntime}</h2>
@@ -60,105 +69,122 @@ export function ControlCenter({
             <div className="control-stat">
               <span>{t.providerModule}</span>
               <strong>{moduleStatus.provider_source}</strong>
+              <div className="approval-actions" style={{ marginTop: 6 }}>
+                <button type="button" disabled={loading} onClick={() => onReloadProvider?.("mock")}>{t.useMock}</button>
+                <button type="button" disabled={loading} onClick={() => onReloadProvider?.("openai")}>{t.useOpenai}</button>
+              </div>
             </div>
             <div className="control-stat">
               <span>{t.riskPolicy}</span>
               <strong>{moduleStatus.risk_policy_source}</strong>
+              <div className="approval-actions" style={{ marginTop: 6 }}>
+                <button type="button" disabled={loading} onClick={() => onReloadRiskPolicy?.("low")}>Low</button>
+                <button type="button" disabled={loading} onClick={() => onReloadRiskPolicy?.("medium")}>Mid</button>
+                <button type="button" disabled={loading} onClick={() => onReloadRiskPolicy?.("high")}>High</button>
+              </div>
             </div>
             <div className="control-stat">
               <span>{t.brainKernel}</span>
               <strong>{moduleStatus.brain_enabled ? t.enabled : t.disabled}</strong>
+              <div className="approval-actions" style={{ marginTop: 6 }}>
+                <button type="button" disabled={loading} onClick={() => onToggleModule?.("brain", !moduleStatus.brain_enabled)}>
+                  {moduleStatus.brain_enabled ? t.disable : t.enable}
+                </button>
+              </div>
             </div>
             <div className="control-stat">
               <span>{t.memoryModule}</span>
               <strong>{moduleStatus.memory_enabled ? t.enabled : t.disabled}</strong>
+              <div className="approval-actions" style={{ marginTop: 6 }}>
+                <button type="button" disabled={loading} onClick={() => onToggleModule?.("memory", !moduleStatus.memory_enabled)}>
+                  {moduleStatus.memory_enabled ? t.disable : t.enable}
+                </button>
+              </div>
             </div>
           </div>
         </article>
 
+        {/* ---- Modules ---- */}
         <article className="workspace-card">
           <div className="panel-header">
             <h2>{t.controlModuleInventory}</h2>
           </div>
           <div className="module-inventory">
-            {modules.map((module) => (
-              <div className="inventory-item" key={module.id}>
+            {modules.map((mod) => (
+              <div className="inventory-item" key={mod.id}>
                 <div className="inventory-copy">
-                  <strong>{module.title}</strong>
-                  <span>{module.hot_swappable ? t.hotSwappable : t.nativeSettings}</span>
+                  <strong>{mod.title}</strong>
+                  <span>{mod.hot_swappable ? t.hotSwappable : t.nativeSettings}</span>
                 </div>
-                <span className={`module-state ${module.enabled ? "on" : "off"}`}>
-                  {module.enabled ? t.enabled : t.disabled}
+                <span className={`module-state ${mod.enabled ? "on" : "off"}`}>
+                  {mod.enabled ? t.enabled : t.disabled}
                 </span>
               </div>
             ))}
           </div>
         </article>
 
+        {/* ---- Executors ---- */}
         <article className="workspace-card">
           <div className="panel-header">
             <h2>{t.controlExecutors}</h2>
           </div>
           <div className="module-inventory">
-            {executors.map((executor) => (
-              <div className="inventory-item" key={executor.id}>
+            {executors.map((exec) => (
+              <div className="inventory-item" key={exec.id}>
                 <div className="inventory-copy">
-                  <strong>{executor.title}</strong>
-                  <span>{executor.route_scope.join(" / ")}</span>
+                  <strong>{exec.title}</strong>
+                  <span>{exec.route_scope.join(" / ")}</span>
                 </div>
-                <span className={`module-state ${executor.enabled ? "on" : "off"}`}>
-                  {executor.enabled ? t.enabled : t.disabled}
+                <span className={`module-state ${exec.enabled ? "on" : "off"}`}>
+                  {exec.enabled ? t.enabled : t.disabled}
                 </span>
               </div>
             ))}
           </div>
         </article>
 
+        {/* ---- Providers ---- */}
         <article className="workspace-card">
           <div className="panel-header">
             <h2>{t.controlProviders}</h2>
           </div>
           <div className="module-inventory">
-            {providers.map((provider) => (
-              <div className="inventory-item" key={provider.id}>
+            {providers.map((p) => (
+              <div className="inventory-item" key={p.id}>
                 <div className="inventory-copy">
-                  <strong>{provider.title}</strong>
-                  <span>
-                    {provider.vendor} / {provider.family} /{" "}
-                    {provider.local_first ? "local-first" : "cloud-ready"}
-                  </span>
+                  <strong>{p.title}</strong>
+                  <span>{p.vendor} / {p.family}</span>
                 </div>
-                <span className={`module-state ${provider.enabled ? "on" : "off"}`}>
-                  {provider.enabled ? t.enabled : t.disabled}
+                <span className={`module-state ${p.enabled ? "on" : "off"}`}>
+                  {p.enabled ? t.enabled : t.disabled}
                 </span>
               </div>
             ))}
           </div>
         </article>
 
+        {/* ---- Browser Runtimes ---- */}
         <article className="workspace-card">
           <div className="panel-header">
             <h2>{t.controlBrowserRuntimes}</h2>
           </div>
           <div className="module-inventory">
-            {browserRuntimes.map((runtime) => (
-              <div className="inventory-item" key={runtime.id}>
+            {browserRuntimes.map((rt) => (
+              <div className="inventory-item" key={rt.id}>
                 <div className="inventory-copy">
-                  <strong>{runtime.title}</strong>
-                  <span>
-                    {runtime.engine} /{" "}
-                    {runtime.headless_default ? "headless-default" : "interactive-default"} /{" "}
-                    {runtime.supports_live_control ? "live-control" : "no-live-control"}
-                  </span>
+                  <strong>{rt.title}</strong>
+                  <span>{rt.engine}</span>
                 </div>
-                <span className={`module-state ${runtime.enabled ? "on" : "off"}`}>
-                  {runtime.enabled ? t.enabled : t.disabled}
+                <span className={`module-state ${rt.enabled ? "on" : "off"}`}>
+                  {rt.enabled ? t.enabled : t.disabled}
                 </span>
               </div>
             ))}
           </div>
         </article>
 
+        {/* ---- Patch Runners ---- */}
         <article className="workspace-card">
           <div className="panel-header">
             <h2>{t.controlPatchRunners}</h2>
@@ -168,9 +194,7 @@ export function ControlCenter({
               <div className="inventory-item" key={runner.id}>
                 <div className="inventory-copy">
                   <strong>{runner.title}</strong>
-                  <span>
-                    {runner.mode} / {runner.mutates_files ? "mutates-files" : "dry-run"}
-                  </span>
+                  <span>{runner.mode}</span>
                 </div>
                 <span className={`module-state ${runner.enabled ? "on" : "off"}`}>
                   {runner.enabled ? t.enabled : t.disabled}
@@ -180,130 +204,119 @@ export function ControlCenter({
           </div>
         </article>
 
+        {/* ---- Skills ---- */}
         <article className="workspace-card">
           <div className="panel-header">
-            <h2>{t.controlPatchRunnerStatus}</h2>
+            <h2>{t.controlSkills}</h2>
           </div>
-          {patchRunnerStatus.length > 0 ? (
-            <div className="workspace-actions">
-              {patchRunnerStatus.map((item) => (
-                <div key={item} className="action-item">
-                  <strong>{item}</strong>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="control-placeholder">
-              <strong>{t.noDataTitle}</strong>
-              <p>{t.controlPlaceholder}</p>
-            </div>
-          )}
-        </article>
-
-        <article className="workspace-card">
-          <div className="panel-header">
-            <h2>{t.controlPatchRunnerActivity}</h2>
-          </div>
-          <div className="audit-list">
-            {patchRunnerAudits.length === 0 ? (
+          <div className="module-inventory">
+            {skills.length === 0 ? (
               <div className="control-placeholder">
-                <strong>{t.noDataTitle}</strong>
-                <p>{t.controlPlaceholder}</p>
+                <strong>No Skills Found</strong>
+                <p>Add .skill files to the /skills directory</p>
               </div>
             ) : (
-              patchRunnerAudits.map((audit) => (
-                <div className="audit-item" key={audit.id}>
-                  <div className="audit-copy">
-                    <strong>{audit.event_type}</strong>
-                    <span>{audit.tool_name ?? "patch-runner"}</span>
+              skills.map((skill) => (
+                <div className="inventory-item" key={skill.id}>
+                  <div className="inventory-copy">
+                    <strong>{skill.metadata.name}</strong>
+                    <span>v{skill.metadata.version} {skill.metadata.author ? `by ${skill.metadata.author}` : ""}</span>
                   </div>
-                  <div className="audit-meta">
-                    <span>{audit.risk_level}</span>
-                    <span>{new Date(audit.timestamp).toLocaleString()}</span>
-                  </div>
-                  <p>{audit.result}</p>
+                  <span className="module-state on" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
+                    READY
+                  </span>
                 </div>
               ))
             )}
           </div>
         </article>
 
+        {/* ---- External Connectors (借鉴 OpenClaw) ---- */}
         <article className="workspace-card">
           <div className="panel-header">
             <h2>{t.controlConnectors}</h2>
           </div>
-          <div className="control-placeholder">
-            <strong>WeChat Connector</strong>
-            <p>{t.controlPlaceholder}</p>
-          </div>
-        </article>
-
-        <article className="workspace-card">
-          <div className="panel-header">
-            <h2>{t.controlVoice}</h2>
-          </div>
-          <div className="control-placeholder">
-            <strong>Push-to-talk runtime</strong>
-            <p>{t.controlPlaceholder}</p>
-          </div>
-        </article>
-
-        <article className="workspace-card">
-          <div className="panel-header">
-            <h2>{t.controlBrowserActivity}</h2>
-          </div>
-          <div className="audit-list">
-            {browserAudits.length === 0 ? (
+          <div className="module-inventory">
+            {connectors.length === 0 ? (
               <div className="control-placeholder">
-                <strong>{t.noDataTitle}</strong>
-                <p>{t.controlPlaceholder}</p>
+                <strong>No Connectors Active</strong>
+                <p>Register external webhooks or chat bridges</p>
               </div>
             ) : (
-              browserAudits.map((audit) => (
-                <div className="audit-item browser-audit" key={audit.id}>
-                  <div className="audit-copy">
-                    <strong>{audit.event_type}</strong>
-                    <span>{audit.tool_name ?? "browser-executor"}</span>
+              connectors.map((c) => (
+                <div className="inventory-item" key={c.id}>
+                  <div className="inventory-copy">
+                    <strong>{c.name}</strong>
+                    <span>Port: {c.port} {c.last_activity ? `· active ${c.last_activity}` : ""}</span>
                   </div>
-                  <div className="audit-meta">
-                    <span>{audit.risk_level}</span>
-                    <span>{new Date(audit.timestamp).toLocaleString()}</span>
-                  </div>
-                  <p>{audit.result}</p>
+                  <span className={`module-state ${c.status === 'online' ? 'on' : 'off'}`}>
+                    {c.status.toUpperCase()}
+                  </span>
                 </div>
               ))
             )}
           </div>
         </article>
 
+        {/* ---- MCP Tool Catalog (对齐 MCP Spec) ---- */}
         <article className="workspace-card">
           <div className="panel-header">
-            <h2>{t.controlDevActivity}</h2>
+            <h2>{t.controlMcpTools}</h2>
           </div>
-          <div className="audit-list">
-            {devAudits.length === 0 ? (
+          <div className="module-inventory">
+            {mcpServers.length === 0 ? (
               <div className="control-placeholder">
-                <strong>{t.noDataTitle}</strong>
-                <p>{t.controlPlaceholder}</p>
+                <strong>No MCP Servers</strong>
+                <p>Link standard model context servers</p>
               </div>
             ) : (
-              devAudits.map((audit) => (
-                <div className="audit-item" key={audit.id}>
-                  <div className="audit-copy">
-                    <strong>{audit.event_type}</strong>
-                    <span>{audit.tool_name ?? "dev-executor"}</span>
-                  </div>
-                  <div className="audit-meta">
-                    <span>{audit.risk_level}</span>
-                    <span>{new Date(audit.timestamp).toLocaleString()}</span>
-                  </div>
-                  <p>{audit.result}</p>
+              mcpServers.map((s) => (
+                <div className="inventory-item" key={s.id} style={{ display: 'block' }}>
+                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                    <strong>{s.name}</strong>
+                    <span className="module-state on">LINKED</span>
+                   </div>
+                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      <span className="pill-tag" title={s.command}>{s.command} {s.args.join(" ")}</span>
+                   </div>
                 </div>
               ))
             )}
           </div>
         </article>
 
+        {/* ---- Memory Shards (借鉴 MemGPT) ---- */}
+        <article className="workspace-card control-span-full">
+          <div className="panel-header">
+            <h2>{t.controlMemory}</h2>
+          </div>
+          <div className="memory-grid">
+            {memoryCards.length === 0 ? (
+              <div className="control-placeholder">
+                <strong>Memory Void</strong>
+                <p>Nexus will start forming long-term insights here</p>
+              </div>
+            ) : (
+              memoryCards.map((card) => (
+                <div className="memory-shard" key={card.id}>
+                  <div className="shard-header">
+                    <strong>{card.title}</strong>
+                    <span className="shard-importance">IMP {card.importance}</span>
+                  </div>
+                  <p className="shard-content">{card.content}</p>
+                  <div className="shard-footer">
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {card.tags.map(tag => <span key={tag} className="tag">#{tag}</span>)}
+                    </div>
+                    <span className="shard-date">{new Date(card.created_at).toLocaleDateString()}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </article>
+
+        {/* ---- Audit Log ---- */}
         <article className="workspace-card control-span-full">
           <div className="panel-header">
             <h2>{t.controlAudit}</h2>
@@ -337,33 +350,4 @@ export function ControlCenter({
       </section>
     </div>
   );
-}
-
-function extractPatchRunnerStatus(raw?: string): string[] {
-  if (!raw) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as {
-      runner_id?: string;
-      mode?: string;
-      log_entries?: string[];
-    };
-
-    const items = [
-      parsed.runner_id ? `runner: ${parsed.runner_id}` : null,
-      parsed.mode ? `mode: ${parsed.mode}` : null,
-      Array.isArray(parsed.log_entries)
-        ? `log entries: ${parsed.log_entries.length}`
-        : null,
-      Array.isArray(parsed.log_entries) && parsed.log_entries.length > 0
-        ? `latest: ${parsed.log_entries[parsed.log_entries.length - 1]}`
-        : null
-    ];
-
-    return items.filter((item): item is string => Boolean(item));
-  } catch {
-    return [];
-  }
 }

@@ -24,6 +24,9 @@ export const I18N: Record<Locale, CopyBundle> = {
     controlDevActivity: "开发活动",
     controlRuntime: "运行时状态",
     controlConnectors: "连接器",
+    controlSkills: "技能库",
+    controlMcpTools: "MCP 工具",
+    controlMemory: "长期记忆",
     controlVoice: "语音运行时",
     controlAudit: "最近审计事件",
     controlPlaceholder:
@@ -178,6 +181,9 @@ export const I18N: Record<Locale, CopyBundle> = {
     controlDevActivity: "Dev Activity",
     controlRuntime: "Runtime Status",
     controlConnectors: "Connectors",
+    controlSkills: "Skills",
+    controlMcpTools: "MCP Tools",
+    controlMemory: "Long-term Memory",
     controlVoice: "Voice Runtime",
     controlAudit: "Recent Audit Events",
     controlPlaceholder:

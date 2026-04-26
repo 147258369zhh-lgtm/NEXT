@@ -15,5 +15,9 @@ nexus-protocol = { path = "../nexus-protocol" }
 nexus-provider = { path = "../nexus-provider" }
 nexus-store = { path = "../nexus-store" }
 nexus-task = { path = "../nexus-task" }
+nexus-mcp = { path = "../nexus-mcp" }
+nexus-skill = { path = "../nexus-skill" }
+async-trait.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 uuid.workspace = true

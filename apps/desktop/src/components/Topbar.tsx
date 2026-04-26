@@ -1,6 +1,9 @@
-import { Icon } from "./Icon";
 import type { CopyBundle, Locale, MainView } from "../types";
 
+/**
+ * Topbar — Minimal top bar with view switch and language toggle.
+ * Codex-style: thin, unobtrusive, functional.
+ */
 export function Topbar({
   t,
   locale,
@@ -19,9 +22,7 @@ export function Topbar({
   return (
     <header className="topbar">
       <div className="topbar-title">
-        <span className="eyebrow">{t.workspaceLabel}</span>
         <strong>{t.appTitle}</strong>
-        <span>{t.appSubtitle}</span>
       </div>
 
       <div className="topbar-metrics">
@@ -41,15 +42,11 @@ export function Topbar({
             {t.controlTab}
           </button>
         </div>
-        <span className="metric-chip">
-          <Icon name="provider" /> {t.providerLive}
-        </span>
-        <span className="metric-chip">
-          <Icon name="risk" /> {t.riskActive}
-        </span>
-        <span className={`metric-chip ${pendingCount > 0 ? "warn" : "ok"}`}>
-          <Icon name="approval" /> {t.approvalsCount} {pendingCount}
-        </span>
+        {pendingCount > 0 && (
+          <span className="metric-chip warn">
+            {t.approvalsCount} {pendingCount}
+          </span>
+        )}
       </div>
 
       <div className="lang-switch">

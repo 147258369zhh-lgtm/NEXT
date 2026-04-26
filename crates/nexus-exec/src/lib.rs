@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
+use async_trait::async_trait;
 
 use nexus_brain::{BrainDecision, BrainKernel, BrainRoute};
 use nexus_browser::{
@@ -34,6 +35,7 @@ pub struct AppRuntime {
     last_brain_route: Mutex<String>,
     brain_enabled: Mutex<bool>,
     memory_enabled: Mutex<bool>,
+    skill_manager: Mutex<nexus_skill::SkillManager>,
     executors: Vec<Arc<dyn TaskExecutor>>,
 }
 
@@ -85,16 +87,19 @@ struct ExecutionResult {
     audits: Vec<nexus_protocol::AuditRecord>,
 }
 
+#[async_trait::async_trait]
 trait TaskExecutor: Send + Sync {
     fn descriptor(&self) -> ExecutorDescriptor;
     fn supports(&self, route: &BrainRoute, prompt: &str) -> bool;
-    fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String>;
+    async fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String>;
 }
 
 struct ProviderExecutor;
 struct BrowserExecutor;
 struct DevExecutor;
+struct McpExecutor;
 
+#[async_trait::async_trait]
 impl TaskExecutor for ProviderExecutor {
     fn descriptor(&self) -> ExecutorDescriptor {
         ExecutorDescriptor {
@@ -120,11 +125,12 @@ impl TaskExecutor for ProviderExecutor {
         )
     }
 
-    fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
-        runtime.run_provider_turn(ctx)
+    async fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+        runtime.run_provider_turn(ctx).await
     }
 }
 
+#[async_trait::async_trait]
 impl TaskExecutor for BrowserExecutor {
     fn descriptor(&self) -> ExecutorDescriptor {
         ExecutorDescriptor {
@@ -139,11 +145,12 @@ impl TaskExecutor for BrowserExecutor {
         matches!(route, BrainRoute::TaskExecution) && is_browser_prompt(prompt)
     }
 
-    fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
-        runtime.run_browser_turn(ctx)
+    async fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+        runtime.run_browser_turn(ctx).await
     }
 }
 
+#[async_trait::async_trait]
 impl TaskExecutor for DevExecutor {
     fn descriptor(&self) -> ExecutorDescriptor {
         ExecutorDescriptor {
@@ -158,8 +165,41 @@ impl TaskExecutor for DevExecutor {
         matches!(route, BrainRoute::TaskExecution) && is_dev_prompt(prompt)
     }
 
-    fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
-        runtime.run_dev_turn(ctx)
+    async fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+        runtime.run_dev_turn(ctx).await
+    }
+}
+
+#[async_trait::async_trait]
+impl TaskExecutor for McpExecutor {
+    fn descriptor(&self) -> ExecutorDescriptor {
+        ExecutorDescriptor {
+            id: "mcp-executor".to_owned(),
+            title: "MCP Ecosystem Executor".to_owned(),
+            route_scope: vec![BrainRoute::TaskExecution.as_str().to_owned()],
+            enabled: true,
+        }
+    }
+
+    fn supports(&self, route: &BrainRoute, prompt: &str) -> bool {
+        matches!(route, BrainRoute::TaskExecution) && (prompt.contains("skill") || prompt.contains("mcp") || prompt.contains("openclaw") || prompt.contains("hermes"))
+    }
+
+    async fn execute(&self, _runtime: &AppRuntime, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+        // Mocking the MCP/Skill execution
+        ctx.task.status = TaskStatus::Completed;
+        let reply = format!("MCP Ecosystem Executor picked up the task: {}. \n\nConnecting to external MCP servers and resolving skills...", ctx.prompt);
+        ctx.task.result_summary = Some(reply.clone());
+        let plan = vec![];
+        let audits = vec![];
+
+        Ok(ExecutionResult {
+            task: ctx.task,
+            reply,
+            approval: ctx.approval,
+            plan,
+            audits,
+        })
     }
 }
 
@@ -190,44 +230,91 @@ impl AppRuntime {
             last_brain_route: Mutex::new("boot".to_owned()),
             brain_enabled: Mutex::new(true),
             memory_enabled: Mutex::new(true),
+            skill_manager: Mutex::new(nexus_skill::SkillManager::new("./skills")),
             executors: vec![
                 Arc::new(BrowserExecutor),
                 Arc::new(DevExecutor),
+                Arc::new(McpExecutor),
                 Arc::new(ProviderExecutor),
             ],
         })
     }
 
-    pub fn submit_chat(
+    pub async fn submit_chat(
         &self,
         message: String,
         locale: Option<String>,
     ) -> Result<ChatResponse, String> {
-        let locale = normalize_locale(locale.as_deref());
-        let decision = self.build_decision(&message)?;
-        let task = self.create_task(&message)?;
-        let plan = TaskService::build_plan(&task);
+        self.process_message(message, locale, "user").await
+    }
 
-        self.persist_new_task(&task, &decision, &plan)?;
+    pub async fn inject_external_message(
+        &self,
+        message: String,
+        source: &str,
+    ) -> Result<ChatResponse, String> {
+        // 外部注入的消息默认使用英文环境并标记来源
+        self.process_message(message, Some("en-US".to_string()), source).await
+    }
+
+    async fn process_message(
+        &self,
+        message: String,
+        locale: Option<String>,
+        source: &str,
+    ) -> Result<ChatResponse, String> {
+        let locale = normalize_locale(locale.as_deref());
+        
+        // 1. Architect Phase: Decide route and build initial plan
+        let mut decision = self.build_decision(&message)?;
+        let mut task = self.create_task(&message)?;
+        task.source = source.to_string();
+        
+        // 2. Initial Persist
+        let plan_steps = TaskService::build_plan(&task);
+        self.persist_new_task(&task, &decision, &plan_steps)?;
         self.update_last_brain_route(decision.route.as_str())?;
 
+        // 3. Approval Check
         if requires_approval(&task.risk_level) {
-            return self.queue_approval(task, locale, plan);
+            return self.queue_approval(task, locale, plan_steps);
         }
 
-        let result = self.dispatch_execution(ExecutionContext {
-            task,
-            prompt: message,
-            approval: None,
-            decision,
-        })?;
+        // 4. Multi-Step Execution Loop (Orchestration Pattern)
+        let mut final_reply = String::new();
+        let mut all_audits = Vec::new();
+
+        for step in &plan_steps {
+            println!("🔄 Executing step: {} - {}", step.id, step.title);
+            
+            // 根据步骤的任务类型动态调整决策路由
+            let step_decision = BrainDecision {
+                route: nexus_brain::BrainRoute::Unknown, // Will be resolved by dispatcher
+                confidence: 1.0,
+                reason: format!("Executing planned step: {}", step.title),
+                plan: None,
+            };
+
+            let result = self.dispatch_execution(ExecutionContext {
+                task: task.clone(),
+                prompt: format!("{} - {}", step.title, step.detail),
+                approval: None,
+                decision: step_decision,
+            }).await?;
+
+            final_reply.push_str(&result.reply);
+            final_reply.push_str("\n\n");
+            all_audits.extend(result.audits);
+            
+            // 这里可以增加状态检查：如果某一步失败，则中断计划并反思
+        }
 
         Ok(ChatResponse {
-            task: result.task,
-            reply: result.reply,
-            approval: result.approval,
-            plan: result.plan,
-            audits: result.audits,
+            task,
+            reply: final_reply.trim().to_owned(),
+            approval: None,
+            plan: plan_steps,
+            audits: all_audits,
         })
     }
 
@@ -280,6 +367,19 @@ impl AppRuntime {
         list_provider_catalog(&ProviderConfig::from_env()).map_err(|err| err.to_string())
     }
 
+    pub fn list_skills(&self) -> Result<Vec<nexus_skill::Skill>, String> {
+        let mut manager = self
+            .skill_manager
+            .lock()
+            .map_err(|_| "skill manager lock poisoned".to_owned())?;
+        manager.scan().map_err(|err| err.to_string())
+    }
+
+    pub fn list_mcp_servers(&self) -> Result<Vec<nexus_mcp::McpServerDescriptor>, String> {
+        // TODO: Implement actual MCP server registry. For now returning empty list.
+        Ok(vec![])
+    }
+
     pub fn get_latest_workspace(&self) -> Result<Option<TaskWorkspace>, String> {
         let store = self.lock_store()?;
         let task = store
@@ -297,7 +397,7 @@ impl AppRuntime {
         }
     }
 
-    pub fn resolve_approval(
+    pub async fn resolve_approval(
         &self,
         approval_id: String,
         approved: bool,
@@ -342,6 +442,7 @@ impl AppRuntime {
                 route: BrainRoute::ApprovalDecision,
                 confidence: 0.92,
                 reason: "execution resumed after explicit approval".to_owned(),
+                plan: None,
             };
             self.update_last_brain_route(decision.route.as_str())?;
             let result = self.dispatch_execution(ExecutionContext {
@@ -349,7 +450,7 @@ impl AppRuntime {
                 prompt: approval.payload.clone(),
                 approval: Some(approval),
                 decision,
-            })?;
+            }).await?;
 
             return Ok(ChatResponse {
                 task: result.task,
@@ -580,11 +681,12 @@ impl AppRuntime {
                 route: BrainRoute::Chat,
                 confidence: 1.0,
                 reason: "brain module disabled, fallback to chat route".to_owned(),
+                plan: None,
             })
         }
     }
 
-    fn dispatch_execution(&self, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+    async fn dispatch_execution(&self, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
         let executor = self
             .executors
             .iter()
@@ -600,10 +702,10 @@ impl AppRuntime {
             store.insert_audit(&audit).map_err(|err| err.to_string())?;
         }
 
-        executor.execute(self, ctx)
+        executor.execute(self, ctx).await
     }
 
-    fn run_provider_turn(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+    async fn run_provider_turn(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
         ctx.task.status = TaskStatus::Executing;
         {
             let store = self.lock_store()?;
@@ -623,7 +725,7 @@ impl AppRuntime {
                 .map_err(|_| "provider lock poisoned".to_owned())?;
             guard.clone()
         };
-        let reply = provider.reply(&provider_prompt).map_err(|err| err.to_string())?;
+        let reply = provider.reply(&provider_prompt).await.map_err(|err| err.to_string())?;
 
         ctx.task.status = TaskStatus::Completed;
         ctx.task.result_summary = Some(reply.clone());
@@ -673,7 +775,7 @@ impl AppRuntime {
         })
     }
 
-    fn run_browser_turn(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+    async fn run_browser_turn(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
         let runtime = build_browser_runtime(&BrowserRuntimeConfig::from_env());
         let browser_task = parse_browser_task(&ctx.prompt, ctx.task.risk_level.clone());
         ctx.task.status = TaskStatus::Executing;
@@ -754,7 +856,7 @@ impl AppRuntime {
         })
     }
 
-    fn run_dev_turn(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+    async fn run_dev_turn(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
         let runtime = build_dev_runtime();
         let dev_task = parse_dev_task(&ctx.prompt);
         ctx.task.status = TaskStatus::Executing;
@@ -769,6 +871,69 @@ impl AppRuntime {
         }
 
         let dev_output = runtime.execute(&dev_task).map_err(|err| err.to_string())?;
+
+        // --- NEW: Real Dual-Brain Native Patching Logic ---
+        let mut patch_runner_log = dev_output.patch_runner_log.clone();
+        if !dev_task.file_targets.is_empty() {
+            let mut prompt_context = String::new();
+            prompt_context.push_str("You are Nexus Main Brain. Your task is to modify the following files according to the user's request.\n");
+            prompt_context.push_str("Output ONLY valid SEARCH/REPLACE blocks in this exact format:\n");
+            prompt_context.push_str("<<<<\npath/to/file\n====\nEXACT lines to search for\n====\nReplacement lines\n>>>>\n\n");
+            prompt_context.push_str(&format!("User request: {}\n\n", ctx.prompt));
+
+            for target in &dev_task.file_targets {
+                if let Ok(content) = std::fs::read_to_string(target) {
+                    prompt_context.push_str(&format!("File: {}\n```\n{}\n```\n\n", target, content));
+                }
+            }
+
+            // Execute via Main Brain
+            let provider = {
+                let guard = self.provider.lock().map_err(|_| "provider lock poisoned".to_owned())?;
+                guard.clone()
+            };
+            if let Ok(reply) = provider.reply(&prompt_context).await {
+                patch_runner_log.push("Received code modifications from Main Brain.".to_owned());
+                // Simple SEARCH/REPLACE block parser
+                let mut current_file = String::new();
+                let mut search_block = String::new();
+                let mut replace_block = String::new();
+                let mut state = 0; // 0: outside, 1: file, 2: search, 3: replace
+
+                for line in reply.lines() {
+                    if line == "<<<<" { state = 1; current_file.clear(); search_block.clear(); replace_block.clear(); continue; }
+                    if line == "====" { state += 1; continue; }
+                    if line == ">>>>" {
+                        state = 0;
+                        if !current_file.is_empty() && !search_block.is_empty() {
+                            if let Ok(content) = std::fs::read_to_string(&current_file) {
+                                let new_content = content.replace(&search_block, &replace_block);
+                                if new_content != content {
+                                    if std::fs::write(&current_file, new_content).is_ok() {
+                                        patch_runner_log.push(format!("Successfully patched {}", current_file));
+                                    } else {
+                                        patch_runner_log.push(format!("Failed to write {}", current_file));
+                                    }
+                                } else {
+                                    patch_runner_log.push(format!("Search block not found in {}", current_file));
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    match state {
+                        1 => current_file = line.trim().to_owned(),
+                        2 => { search_block.push_str(line); search_block.push('\n'); },
+                        3 => { replace_block.push_str(line); replace_block.push('\n'); },
+                        _ => {}
+                    }
+                }
+            } else {
+                patch_runner_log.push("Main Brain failed to generate a response.".to_owned());
+            }
+        }
+        // ---------------------------------------------------
         let plan_audit = nexus_audit::dev_plan_saved(
             ctx.task.id,
             &format!(
@@ -814,11 +979,11 @@ impl AppRuntime {
                 "runner_id={}; mode={}; log={}",
                 dev_output.patch_runner_id,
                 dev_output.patch_runner_mode,
-                dev_output.patch_runner_log.join(" | ")
+                patch_runner_log.join(" | ")
             ),
         );
         let patch_runner_log_audit =
-            nexus_audit::dev_runner_log_saved(ctx.task.id, &dev_output.patch_runner_log_json);
+            nexus_audit::dev_runner_log_saved(ctx.task.id, &serde_json::to_string(&patch_runner_log).unwrap_or_default());
         let prepared = nexus_audit::dev_executor_prepared(
             ctx.task.id,
             &format!(

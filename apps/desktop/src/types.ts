@@ -122,6 +122,60 @@ export type PatchRunnerDescriptor = {
   enabled: boolean;
 };
 
+export type SkillMetadata = {
+  name: string;
+  version: string;
+  author?: string;
+  description?: string;
+};
+
+export type Skill = {
+  id: string;
+  metadata: SkillMetadata;
+  triggers: string[];
+  actions: string[];
+  risk_level: string;
+  execution_mode: string;
+  path: string;
+};
+
+export type McpTool = {
+  name: string;
+  description: string;
+  input_schema: any;
+};
+
+export type McpServer = {
+  id: string;
+  name: string;
+  status: string;
+  tools: McpTool[];
+};
+
+export type McpServerDescriptor = {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+};
+
+export type ConnectorStatus = {
+  id: string;
+  name: string;
+  port: number;
+  status: "online" | "offline";
+  last_activity?: string;
+};
+
+export type MemoryCard = {
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  importance: number;
+  created_at: string;
+};
+
 export type ModuleAction = {
   label: string;
   kind?: "danger";
@@ -160,12 +214,15 @@ export type CopyBundle = {
   controlProviders: string;
   controlBrowserRuntimes: string;
   controlPatchRunners: string;
+  controlSkills: string;
+  controlConnectors: string;
+  controlMcpTools: string;
+  controlMemory: string;
   controlPatchRunnerActivity: string;
   controlPatchRunnerStatus: string;
   controlBrowserActivity: string;
   controlDevActivity: string;
   controlRuntime: string;
-  controlConnectors: string;
   controlVoice: string;
   controlAudit: string;
   controlPlaceholder: string;

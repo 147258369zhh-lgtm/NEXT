@@ -11,6 +11,7 @@ pub struct MemoryCard {
     pub title: String,
     pub content: String,
     pub tags: Vec<String>,
+    pub importance: u8, // 0-10
     pub created_at: DateTime<Utc>,
 }
 
@@ -28,20 +29,27 @@ impl MemoryService {
             prompt.trim(),
             summarize(reply, 240)
         );
+        let importance = if prompt.contains("remember") || prompt.contains("记下") { 8 } else { 2 };
+        let tags = extract_tags(prompt, decision);
+
         MemoryCard {
             id: Uuid::new_v4(),
             task_id,
-            card_type: "conversation_summary".to_owned(),
+            card_type: if importance > 5 { "insight".to_owned() } else { "conversation_summary".to_owned() },
             title,
             content,
-            tags: vec![
-                "chat".to_owned(),
-                decision.route.as_str().to_owned(),
-                "auto".to_owned(),
-            ],
+            tags,
+            importance,
             created_at: now,
         }
     }
+}
+
+fn extract_tags(prompt: &str, decision: &BrainDecision) -> Vec<String> {
+    let mut tags = vec![decision.route.as_str().to_owned(), "auto".to_owned()];
+    if prompt.to_lowercase().contains("rust") { tags.push("rust".to_owned()); }
+    if prompt.to_lowercase().contains("ui") { tags.push("ui".to_owned()); }
+    tags
 }
 
 fn summarize(text: &str, cap: usize) -> String {

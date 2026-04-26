@@ -1,5 +1,6 @@
 use anyhow::Result;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DevRuntimeDescriptor {
@@ -123,9 +124,16 @@ pub struct PatchSetRecord {
     pub composition: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Hunk {
+    pub search: String,
+    pub replace: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchFileRecord {
     pub path: String,
+    pub hunks: Vec<Hunk>,
     pub role: String,
     pub mutation_boundary: String,
     pub verification_target: String,
@@ -257,6 +265,7 @@ pub trait PatchRunner: Send + Sync {
 
 pub struct ScaffoldDevRuntime;
 pub struct DryRunPatchRunner;
+pub struct NativePatchRunner;
 
 impl PatchRunner for DryRunPatchRunner {
     fn descriptor(&self) -> PatchRunnerDescriptor {
@@ -296,11 +305,139 @@ impl PatchRunner for DryRunPatchRunner {
 }
 
 pub fn build_patch_runner() -> Box<dyn PatchRunner> {
-    Box::new(DryRunPatchRunner)
+    Box::new(NativePatchRunner)
 }
 
 pub fn list_patch_runner_catalog() -> Vec<PatchRunnerDescriptor> {
-    vec![DryRunPatchRunner.descriptor()]
+    vec![DryRunPatchRunner.descriptor(), NativePatchRunner.descriptor()]
+}
+
+impl PatchRunner for NativePatchRunner {
+    fn descriptor(&self) -> PatchRunnerDescriptor {
+        PatchRunnerDescriptor {
+            id: "patch-runner-native".to_owned(),
+            title: "Native File Patch Runner".to_owned(),
+            mode: "native_fs".to_owned(),
+            mutates_files: true,
+            enabled: true,
+        }
+    }
+
+    fn run(&self, schema: &PatchPlanSchema) -> Result<PatchRunnerOutput> {
+        let descriptor = self.descriptor();
+        let mut execution_log = vec![
+            format!("runner={} mode={}", descriptor.id, descriptor.mode),
+        ];
+
+        for file_patch in &schema.patch_files {
+            let path = Path::new(&file_patch.path);
+            if !path.exists() {
+                execution_log.push(format!("Error: file not found: {}", file_patch.path));
+                continue;
+            }
+
+            let content = std::fs::read_to_string(path)?;
+            let mut new_content = content.clone();
+            let mut success_count = 0;
+
+            for hunk in &file_patch.hunks {
+                match apply_hunk(&new_content, hunk) {
+                    Ok(applied) => {
+                        new_content = applied;
+                        success_count += 1;
+                    }
+                    Err(e) => {
+                        execution_log.push(format!("Failed to apply hunk in {}: {}", file_patch.path, e));
+                    }
+                }
+            }
+
+            if success_count > 0 {
+                std::fs::write(path, new_content)?;
+                execution_log.push(format!("Applied {} hunks to {}", success_count, file_patch.path));
+            }
+        }
+
+        Ok(PatchRunnerOutput {
+            runner_id: descriptor.id,
+            mode: descriptor.mode,
+            execution_log,
+        })
+    }
+}
+
+/// 核心算法：Aider 风格的缩进感知型 Search/Replace 匹配
+fn apply_hunk(content: &str, hunk: &Hunk) -> Result<String, String> {
+    let content_lines: Vec<&str> = content.lines().collect();
+    let search_lines: Vec<&str> = hunk.search.lines().map(|s| s.trim_end()).collect();
+    let replace_lines: Vec<&str> = hunk.replace.lines().map(|s| s.trim_end()).collect();
+
+    if search_lines.is_empty() {
+        return Err("Empty search block".to_string());
+    }
+
+    let mut matches = Vec::new();
+
+    // 在内容中滑动寻找搜索块
+    for i in 0..=content_lines.len().saturating_sub(search_lines.len()) {
+        let mut found = true;
+        let mut detected_indent: Option<&str> = None;
+
+        for j in 0..search_lines.len() {
+            let content_line = content_lines[i + j].trim_end();
+            let search_line = search_lines[j];
+
+            // 尝试检测缩进差异（Aider 会尝试将搜索块的缩进与内容对齐）
+            if content_line.ends_with(search_line) {
+                let indent_len = content_line.len() - search_line.len();
+                let current_indent = &content_lines[i + j][..indent_len];
+                
+                if let Some(prev_indent) = detected_indent {
+                    if prev_indent != current_indent {
+                        found = false;
+                        break;
+                    }
+                } else {
+                    detected_indent = Some(current_indent);
+                }
+            } else {
+                found = false;
+                break;
+            }
+        }
+
+        if found {
+            matches.push((i, detected_indent.unwrap_or("")));
+        }
+    }
+
+    if matches.is_empty() {
+        return Err("Search block not found (check indentation and exact content)".to_string());
+    }
+
+    if matches.len() > 1 {
+        return Err(format!("Ambiguous match: found {} occurrences of the search block", matches.len()));
+    }
+
+    let (start_index, indent) = matches[0];
+    let mut final_lines = Vec::new();
+
+    // 复制搜索块之前的内容
+    for i in 0..start_index {
+        final_lines.push(content_lines[i].to_string());
+    }
+
+    // 插入替换内容，并应用检测到的缩进
+    for line in replace_lines {
+        final_lines.push(format!("{}{}", indent, line));
+    }
+
+    // 复制搜索块之后的内容
+    for i in (start_index + search_lines.len())..content_lines.len() {
+        final_lines.push(content_lines[i].to_string());
+    }
+
+    Ok(final_lines.join("\n"))
 }
 
 impl DevRuntime for ScaffoldDevRuntime {
@@ -964,6 +1101,7 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
     match spec.patch_strategy {
         PatchStrategy::None => vec![PatchFileRecord {
             path: "read-only".to_owned(),
+            hunks: vec![],
             role: "inspection".to_owned(),
             mutation_boundary: "no file mutation".to_owned(),
             verification_target: "findings only".to_owned(),
@@ -971,6 +1109,7 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
         }],
         PatchStrategy::VerificationPass => vec![PatchFileRecord {
             path: "verification-only".to_owned(),
+            hunks: vec![],
             role: "verification".to_owned(),
             mutation_boundary: "checks only".to_owned(),
             verification_target: "verification command path".to_owned(),
@@ -983,6 +1122,7 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
                     .enumerate()
                     .map(|(index, path)| PatchFileRecord {
                         path: path.clone(),
+                        hunks: vec![],
                         role: "primary patch target".to_owned(),
                         mutation_boundary: "minimal in-place diff only".to_owned(),
                         verification_target: format!("focused verification for {}", path),
@@ -992,6 +1132,7 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
             } else {
                 vec![PatchFileRecord {
                     path: "unknown".to_owned(),
+                    hunks: vec![],
                     role: "discovery target".to_owned(),
                     mutation_boundary: "locate file before edit".to_owned(),
                     verification_target: "focused verification after file selection".to_owned(),
@@ -1006,6 +1147,7 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
                     .enumerate()
                     .map(|(index, path)| PatchFileRecord {
                         path: path.clone(),
+                        hunks: vec![],
                         role: "boundary extraction target".to_owned(),
                         mutation_boundary: "incremental seam extraction only".to_owned(),
                         verification_target: format!("incremental verification for {}", path),
@@ -1018,6 +1160,7 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
                     .enumerate()
                     .map(|(index, module)| PatchFileRecord {
                         path: module.clone(),
+                        hunks: vec![],
                         role: "module boundary target".to_owned(),
                         mutation_boundary: "extract runtime seam before cleanup".to_owned(),
                         verification_target: format!("module-level verification for {}", module),
@@ -1027,6 +1170,7 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
             } else {
                 vec![PatchFileRecord {
                     path: "unknown".to_owned(),
+                    hunks: vec![],
                     role: "boundary discovery".to_owned(),
                     mutation_boundary: "identify seam before moving code".to_owned(),
                     verification_target: "verification after seam discovery".to_owned(),
