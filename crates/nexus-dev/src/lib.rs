@@ -1,6 +1,7 @@
+﻿use std::env;
+
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
-use std::path::{Path, PathBuf};
+use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DevRuntimeDescriptor {
@@ -87,10 +88,30 @@ impl PatchStrategy {
         }
     }
 }
+#[derive(Debug, Clone, Serialize)]
+pub struct DevModeDescriptor {
+    pub slug: String,
+    pub title: String,
+    pub intent: String,
+    pub task_kinds: Vec<String>,
+    pub allowed_tool_groups: Vec<String>,
+    pub allowed_path_patterns: Vec<String>,
+    pub mutates_files: bool,
+    pub requires_approval: bool,
+    pub default_runner: String,
+    pub borrowed_from: String,
+}
+
+impl DevModeDescriptor {
+    fn allows_intent(&self, intent: &DevIntent) -> bool {
+        self.intent == intent.as_str() || self.intent == "any"
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DevTaskSpec {
     pub prompt: String,
+    pub mode: DevModeDescriptor,
     pub intent: DevIntent,
     pub execution_mode: DevExecutionMode,
     pub repo_scope: RepoScope,
@@ -124,16 +145,9 @@ pub struct PatchSetRecord {
     pub composition: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Hunk {
-    pub search: String,
-    pub replace: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PatchFileRecord {
     pub path: String,
-    pub hunks: Vec<Hunk>,
     pub role: String,
     pub mutation_boundary: String,
     pub verification_target: String,
@@ -235,7 +249,15 @@ pub struct PatchRunnerDescriptor {
     pub id: String,
     pub title: String,
     pub mode: String,
+    pub family: String,
+    pub source: String,
+    pub repository: String,
+    pub license: String,
+    pub review_status: String,
+    pub integration_level: String,
     pub mutates_files: bool,
+    pub requires_approval: bool,
+    pub supports_dry_run: bool,
     pub enabled: bool,
 }
 
@@ -243,13 +265,25 @@ pub struct PatchRunnerDescriptor {
 pub struct PatchRunnerOutput {
     pub runner_id: String,
     pub mode: String,
+    pub guard: ModeGuardReport,
     pub execution_log: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModeGuardReport {
+    pub status: String,
+    pub mode_slug: String,
+    pub allowed_tool_groups: Vec<String>,
+    pub allowed_path_patterns: Vec<String>,
+    pub violations: Vec<String>,
+    pub messages: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PatchRunnerAuditPayload {
     pub runner_id: String,
     pub mode: String,
+    pub guard: ModeGuardReport,
     pub log_entries: Vec<String>,
 }
 
@@ -260,12 +294,14 @@ pub trait DevRuntime: Send + Sync {
 
 pub trait PatchRunner: Send + Sync {
     fn descriptor(&self) -> PatchRunnerDescriptor;
-    fn run(&self, schema: &PatchPlanSchema) -> Result<PatchRunnerOutput>;
+    fn run(&self, schema: &PatchPlanSchema, mode: &DevModeDescriptor) -> Result<PatchRunnerOutput>;
 }
+
 
 pub struct ScaffoldDevRuntime;
 pub struct DryRunPatchRunner;
-pub struct NativePatchRunner;
+pub struct EmbeddedAgentPatchRunner;
+pub struct MutationAgentPatchRunner;
 
 impl PatchRunner for DryRunPatchRunner {
     fn descriptor(&self) -> PatchRunnerDescriptor {
@@ -273,21 +309,36 @@ impl PatchRunner for DryRunPatchRunner {
             id: "patch-runner-dry-run".to_owned(),
             title: "Dry Run Patch Runner".to_owned(),
             mode: "dry_run".to_owned(),
+            family: "scaffold".to_owned(),
+            source: "nexus-native".to_owned(),
+            repository: "local".to_owned(),
+            license: "MIT workspace".to_owned(),
+            review_status: "implemented".to_owned(),
+            integration_level: "native".to_owned(),
             mutates_files: false,
+            requires_approval: false,
+            supports_dry_run: true,
             enabled: true,
         }
     }
 
-    fn run(&self, schema: &PatchPlanSchema) -> Result<PatchRunnerOutput> {
+    fn run(&self, schema: &PatchPlanSchema, mode: &DevModeDescriptor) -> Result<PatchRunnerOutput> {
         let descriptor = self.descriptor();
+        let guard = validate_mode_for_runner(mode, &descriptor, schema);
+        if should_hard_block_guard(&descriptor, &guard) {
+            return Err(guard_block_error(&descriptor, &guard));
+        }
+
         let mut execution_log = vec![
             format!("runner={} mode={}", descriptor.id, descriptor.mode),
+            format!("dev_mode={} guard={}", mode.slug, guard.status),
             format!(
                 "selected_batches={}",
                 schema.execution_request.selected_batches.join(", ")
             ),
             format!("target_paths={}", schema.execution_request.target_paths.join(", ")),
         ];
+        execution_log.extend(guard.messages);
 
         execution_log.extend(schema.patch_apply_plan.iter().map(|step| {
             format!(
@@ -299,145 +350,196 @@ impl PatchRunner for DryRunPatchRunner {
         Ok(PatchRunnerOutput {
             runner_id: descriptor.id,
             mode: descriptor.mode,
+            guard,
             execution_log,
         })
     }
 }
 
-pub fn build_patch_runner() -> Box<dyn PatchRunner> {
-    Box::new(NativePatchRunner)
-}
-
-pub fn list_patch_runner_catalog() -> Vec<PatchRunnerDescriptor> {
-    vec![DryRunPatchRunner.descriptor(), NativePatchRunner.descriptor()]
-}
-
-impl PatchRunner for NativePatchRunner {
+impl PatchRunner for MutationAgentPatchRunner {
     fn descriptor(&self) -> PatchRunnerDescriptor {
         PatchRunnerDescriptor {
-            id: "patch-runner-native".to_owned(),
-            title: "Native File Patch Runner".to_owned(),
-            mode: "native_fs".to_owned(),
+            id: "patch-runner-mutation-placeholder".to_owned(),
+            title: "Mutation Agent Placeholder".to_owned(),
+            mode: "mutation_guard_test".to_owned(),
+            family: "code-agent".to_owned(),
+            source: "reserved:future-mutation-agent".to_owned(),
+            repository: "docs/research/001a-roo-code-source-review.md".to_owned(),
+            license: "not-applicable-placeholder".to_owned(),
+            review_status: "disabled-guard-test".to_owned(),
+            integration_level: "placeholder".to_owned(),
             mutates_files: true,
-            enabled: true,
+            requires_approval: true,
+            supports_dry_run: true,
+            enabled: false,
         }
     }
 
-    fn run(&self, schema: &PatchPlanSchema) -> Result<PatchRunnerOutput> {
+    fn run(&self, schema: &PatchPlanSchema, mode: &DevModeDescriptor) -> Result<PatchRunnerOutput> {
         let descriptor = self.descriptor();
+        let guard = validate_mode_for_runner(mode, &descriptor, schema);
+        if should_hard_block_guard(&descriptor, &guard) {
+            return Err(guard_block_error(&descriptor, &guard));
+        }
+
         let mut execution_log = vec![
             format!("runner={} mode={}", descriptor.id, descriptor.mode),
+            format!("dev_mode={} guard={}", mode.slug, guard.status),
+            "mutation placeholder reached guarded execution boundary".to_owned(),
+            "no files were mutated; this runner exists only to test guard behavior".to_owned(),
         ];
-
-        for file_patch in &schema.patch_files {
-            let path = Path::new(&file_patch.path);
-            if !path.exists() {
-                execution_log.push(format!("Error: file not found: {}", file_patch.path));
-                continue;
-            }
-
-            let content = std::fs::read_to_string(path)?;
-            let mut new_content = content.clone();
-            let mut success_count = 0;
-
-            for hunk in &file_patch.hunks {
-                match apply_hunk(&new_content, hunk) {
-                    Ok(applied) => {
-                        new_content = applied;
-                        success_count += 1;
-                    }
-                    Err(e) => {
-                        execution_log.push(format!("Failed to apply hunk in {}: {}", file_patch.path, e));
-                    }
-                }
-            }
-
-            if success_count > 0 {
-                std::fs::write(path, new_content)?;
-                execution_log.push(format!("Applied {} hunks to {}", success_count, file_patch.path));
-            }
-        }
+        execution_log.extend(guard.messages.clone());
 
         Ok(PatchRunnerOutput {
             runner_id: descriptor.id,
             mode: descriptor.mode,
+            guard,
             execution_log,
         })
     }
 }
-
-/// 核心算法：Aider 风格的缩进感知型 Search/Replace 匹配
-fn apply_hunk(content: &str, hunk: &Hunk) -> Result<String, String> {
-    let content_lines: Vec<&str> = content.lines().collect();
-    let search_lines: Vec<&str> = hunk.search.lines().map(|s| s.trim_end()).collect();
-    let replace_lines: Vec<&str> = hunk.replace.lines().map(|s| s.trim_end()).collect();
-
-    if search_lines.is_empty() {
-        return Err("Empty search block".to_string());
-    }
-
-    let mut matches = Vec::new();
-
-    // 在内容中滑动寻找搜索块
-    for i in 0..=content_lines.len().saturating_sub(search_lines.len()) {
-        let mut found = true;
-        let mut detected_indent: Option<&str> = None;
-
-        for j in 0..search_lines.len() {
-            let content_line = content_lines[i + j].trim_end();
-            let search_line = search_lines[j];
-
-            // 尝试检测缩进差异（Aider 会尝试将搜索块的缩进与内容对齐）
-            if content_line.ends_with(search_line) {
-                let indent_len = content_line.len() - search_line.len();
-                let current_indent = &content_lines[i + j][..indent_len];
-                
-                if let Some(prev_indent) = detected_indent {
-                    if prev_indent != current_indent {
-                        found = false;
-                        break;
-                    }
-                } else {
-                    detected_indent = Some(current_indent);
-                }
-            } else {
-                found = false;
-                break;
-            }
-        }
-
-        if found {
-            matches.push((i, detected_indent.unwrap_or("")));
+impl PatchRunner for EmbeddedAgentPatchRunner {
+    fn descriptor(&self) -> PatchRunnerDescriptor {
+        PatchRunnerDescriptor {
+            id: "patch-runner-embedded-agent".to_owned(),
+            title: "Embedded Agent Patch Runner".to_owned(),
+            mode: "embedded_agent_plan".to_owned(),
+            family: "code-agent".to_owned(),
+            source: "reserved:Cline/Roo/OpenCode/Aider".to_owned(),
+            repository: "docs/research/001a-roo-code-source-review.md".to_owned(),
+            license: "pending-source-review".to_owned(),
+            review_status: "roo-review-started".to_owned(),
+            integration_level: "embedded-planned".to_owned(),
+            mutates_files: false,
+            requires_approval: true,
+            supports_dry_run: true,
+            enabled: true,
         }
     }
 
-    if matches.is_empty() {
-        return Err("Search block not found (check indentation and exact content)".to_string());
+    fn run(&self, schema: &PatchPlanSchema, mode: &DevModeDescriptor) -> Result<PatchRunnerOutput> {
+        let descriptor = self.descriptor();
+        let guard = validate_mode_for_runner(mode, &descriptor, schema);
+        if should_hard_block_guard(&descriptor, &guard) {
+            return Err(guard_block_error(&descriptor, &guard));
+        }
+
+        let mut execution_log = vec![
+            format!("runner={} mode={}", descriptor.id, descriptor.mode),
+            format!("dev_mode={} guard={}", mode.slug, guard.status),
+            "embedded-agent adapter boundary selected".to_owned(),
+            "no third-party code agent is embedded yet; returning structured handoff plan".to_owned(),
+            format!("target_paths={}", schema.execution_request.target_paths.join(", ")),
+            format!("verification_scope={}", schema.execution_request.verification_scope),
+        ];
+        execution_log.extend(guard.messages);
+
+        execution_log.extend(schema.patch_items.iter().map(|item| {
+            format!(
+                "handoff item target={} action={} strategy={}",
+                item.target, item.action, item.strategy
+            )
+        }));
+
+        Ok(PatchRunnerOutput {
+            runner_id: descriptor.id,
+            mode: descriptor.mode,
+            guard,
+            execution_log,
+        })
+    }
+}
+fn should_hard_block_guard(runner: &PatchRunnerDescriptor, guard: &ModeGuardReport) -> bool {
+    runner.mutates_files && guard.status != "passed"
+}
+
+fn guard_block_error(runner: &PatchRunnerDescriptor, guard: &ModeGuardReport) -> anyhow::Error {
+    anyhow::anyhow!(
+        "patch runner `{}` blocked by dev mode guard: {}",
+        runner.id,
+        guard.violations.join("; ")
+    )
+}
+fn validate_mode_for_runner(
+    mode: &DevModeDescriptor,
+    runner: &PatchRunnerDescriptor,
+    schema: &PatchPlanSchema,
+) -> ModeGuardReport {
+    let mut messages = vec![
+        format!("mode_allowed_tools={}", mode.allowed_tool_groups.join(",")),
+        format!("mode_allowed_paths={}", mode.allowed_path_patterns.join(",")),
+        format!("mode_requires_approval={}", mode.requires_approval),
+        format!("runner_requires_approval={}", runner.requires_approval),
+    ];
+
+    let mut violations = Vec::new();
+    if runner.mutates_files && !mode.mutates_files {
+        violations.push("runner mutates files but mode is read-only".to_owned());
+    }
+    if runner.mutates_files && !mode.allowed_tool_groups.iter().any(|tool| tool == "edit") {
+        violations.push("runner mutates files but mode does not allow edit tool group".to_owned());
+    }
+    if runner.requires_approval && !mode.requires_approval {
+        messages.push("runner requires approval even though mode does not".to_owned());
     }
 
-    if matches.len() > 1 {
-        return Err(format!("Ambiguous match: found {} occurrences of the search block", matches.len()));
+    for path in &schema.execution_request.target_paths {
+        if !path_allowed_by_mode(path, &mode.allowed_path_patterns) {
+            violations.push(format!("target path `{}` is outside mode path patterns", path));
+        }
     }
 
-    let (start_index, indent) = matches[0];
-    let mut final_lines = Vec::new();
-
-    // 复制搜索块之前的内容
-    for i in 0..start_index {
-        final_lines.push(content_lines[i].to_string());
+    if violations.is_empty() {
+        messages.push("mode guard passed".to_owned());
+        ModeGuardReport {
+            status: "passed".to_owned(),
+            mode_slug: mode.slug.clone(),
+            allowed_tool_groups: mode.allowed_tool_groups.clone(),
+            allowed_path_patterns: mode.allowed_path_patterns.clone(),
+            violations,
+            messages,
+        }
+    } else {
+        messages.extend(violations.iter().map(|item| format!("mode guard violation: {}", item)));
+        ModeGuardReport {
+            status: "blocked-dry-run".to_owned(),
+            mode_slug: mode.slug.clone(),
+            allowed_tool_groups: mode.allowed_tool_groups.clone(),
+            allowed_path_patterns: mode.allowed_path_patterns.clone(),
+            violations,
+            messages,
+        }
     }
+}
 
-    // 插入替换内容，并应用检测到的缩进
-    for line in replace_lines {
-        final_lines.push(format!("{}{}", indent, line));
+fn path_allowed_by_mode(path: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|pattern| {
+        pattern == "**/*"
+            || pattern == path
+            || pattern
+                .strip_suffix("/**")
+                .map(|prefix| path.starts_with(prefix))
+                .unwrap_or(false)
+    })
+}
+pub fn build_patch_runner() -> Box<dyn PatchRunner> {
+    match env::var("NEXUS_PATCH_RUNNER") {
+        Ok(value) if value == "embedded-agent" || value == "patch-runner-embedded-agent" => {
+            Box::new(EmbeddedAgentPatchRunner)
+        }
+        Ok(value) if value == "mutation-placeholder" || value == "patch-runner-mutation-placeholder" => {
+            Box::new(MutationAgentPatchRunner)
+        }
+        _ => Box::new(DryRunPatchRunner),
     }
+}
 
-    // 复制搜索块之后的内容
-    for i in (start_index + search_lines.len())..content_lines.len() {
-        final_lines.push(content_lines[i].to_string());
-    }
-
-    Ok(final_lines.join("\n"))
+pub fn list_patch_runner_catalog() -> Vec<PatchRunnerDescriptor> {
+    vec![
+        DryRunPatchRunner.descriptor(),
+        EmbeddedAgentPatchRunner.descriptor(),
+        MutationAgentPatchRunner.descriptor(),
+    ]
 }
 
 impl DevRuntime for ScaffoldDevRuntime {
@@ -467,11 +569,12 @@ impl DevRuntime for ScaffoldDevRuntime {
         let patch_contract = suggest_patch_contract(spec);
         let patch_schema = build_patch_schema(spec);
         let patch_runner = build_patch_runner();
-        let patch_runner_output = patch_runner.run(&patch_schema)?;
+        let patch_runner_output = patch_runner.run(&patch_schema, &spec.mode)?;
         let patch_schema_json = serde_json::to_string_pretty(&patch_schema)?;
         let patch_runner_log_json = serde_json::to_string_pretty(&PatchRunnerAuditPayload {
             runner_id: patch_runner_output.runner_id.clone(),
             mode: patch_runner_output.mode.clone(),
+            guard: patch_runner_output.guard.clone(),
             log_entries: patch_runner_output.execution_log.clone(),
         })?;
         let verification_plan = suggest_verification_plan(spec);
@@ -481,7 +584,10 @@ impl DevRuntime for ScaffoldDevRuntime {
 
         Ok(DevExecutionOutput {
             summary: format!(
-                "Dev runtime scaffold accepted this task.\n\nPatch schema: {}\nIntent: {}\nExecution mode: {}\nRepo scope: {}\nPatch strategy: {}\nPatch-first: {}\nPatch runner: {} ({})\n\nTarget request:\n{}\n\nFile targets:\n- {}\n\nModule targets:\n- {}\n\nRecommended steps:\n- {}\n\nOperation steps:\n- {}\n\nChange plan:\n- {}\n\nPatch outline:\n- {}\n\nPatch proposal:\n- {}\n\nPatch files:\n- {}\n\nApply plan:\n- {}\n\nExecution contract:\n- {}\n\nExecution request:\n- {}\n\nRunner log:\n- {}\n\nPatch items:\n- {}\n\nPatch hunks:\n- {}\n\nPatch sets:\n- {}\n\nPatch contract:\n- {}\n\nPatch schema export: stored separately in dev.patch_schema audit ({}, {} files / {} apply steps / {} items / {} hunks / {} sets).\n\nPatch targets:\n- {}\n\nVerification plan:\n- {}\n\nVerification targets:\n- {}\n\nArtifacts:\n- {}\n\nCurrent behavior: this runtime is now the dedicated execution boundary for coding work. The next step is wiring in Aider-style patch planning and OpenHands-style repo task loops without pushing that logic back into the desktop shell.",
+                "Dev runtime scaffold accepted this task.\n\nDev mode: {} ({})\nAllowed tools: {}\nPatch schema: {}\nIntent: {}\nExecution mode: {}\nRepo scope: {}\nPatch strategy: {}\nPatch-first: {}\nPatch runner: {} ({})\n\nTarget request:\n{}\n\nFile targets:\n- {}\n\nModule targets:\n- {}\n\nRecommended steps:\n- {}\n\nOperation steps:\n- {}\n\nChange plan:\n- {}\n\nPatch outline:\n- {}\n\nPatch proposal:\n- {}\n\nPatch files:\n- {}\n\nApply plan:\n- {}\n\nExecution contract:\n- {}\n\nExecution request:\n- {}\n\nRunner log:\n- {}\n\nPatch items:\n- {}\n\nPatch hunks:\n- {}\n\nPatch sets:\n- {}\n\nPatch contract:\n- {}\n\nPatch schema export: stored separately in dev.patch_schema audit ({}, {} files / {} apply steps / {} items / {} hunks / {} sets).\n\nPatch targets:\n- {}\n\nVerification plan:\n- {}\n\nVerification targets:\n- {}\n\nArtifacts:\n- {}\n\nCurrent behavior: this runtime is now the dedicated execution boundary for coding work. The next step is wiring in Aider-style patch planning and OpenHands-style repo task loops without pushing that logic back into the desktop shell.",
+                spec.mode.slug,
+                spec.mode.title,
+                spec.mode.allowed_tool_groups.join(", "),
                 patch_schema_version(),
                 spec.intent.as_str(),
                 spec.execution_mode.as_str(),
@@ -520,6 +626,8 @@ impl DevRuntime for ScaffoldDevRuntime {
             ),
             transcript: vec![
                 "dev runtime selected".to_owned(),
+                format!("dev_mode={}", spec.mode.slug),
+                format!("dev_mode_tools={}", spec.mode.allowed_tool_groups.join(",")),
                 format!("patch_schema={}", patch_schema_version()),
                 format!("intent={}", spec.intent.as_str()),
                 format!("execution_mode={}", spec.execution_mode.as_str()),
@@ -583,6 +691,98 @@ impl DevRuntime for ScaffoldDevRuntime {
     }
 }
 
+pub fn list_dev_mode_catalog() -> Vec<DevModeDescriptor> {
+    vec![
+        DevModeDescriptor {
+            slug: "code.inspect".to_owned(),
+            title: "Inspect Code".to_owned(),
+            intent: "analyze".to_owned(),
+            task_kinds: vec!["code.inspect".to_owned(), "code.explain".to_owned()],
+            allowed_tool_groups: vec!["read".to_owned(), "search".to_owned(), "summarize".to_owned()],
+            allowed_path_patterns: vec!["**/*".to_owned()],
+            mutates_files: false,
+            requires_approval: false,
+            default_runner: "patch-runner-dry-run".to_owned(),
+            borrowed_from: "Roo Ask/Architect mode concept".to_owned(),
+        },
+        DevModeDescriptor {
+            slug: "code.patch".to_owned(),
+            title: "Patch Code".to_owned(),
+            intent: "patch".to_owned(),
+            task_kinds: vec!["code.patch".to_owned(), "code.refactor".to_owned()],
+            allowed_tool_groups: vec!["read".to_owned(), "search".to_owned(), "edit".to_owned(), "test".to_owned()],
+            allowed_path_patterns: vec!["apps/**".to_owned(), "crates/**".to_owned(), "packages/**".to_owned(), "docs/**".to_owned()],
+            mutates_files: true,
+            requires_approval: true,
+            default_runner: "patch-runner-embedded-agent".to_owned(),
+            borrowed_from: "Roo Code mode concept".to_owned(),
+        },
+        DevModeDescriptor {
+            slug: "code.verify".to_owned(),
+            title: "Verify Code".to_owned(),
+            intent: "verify".to_owned(),
+            task_kinds: vec!["code.verify".to_owned(), "test.run".to_owned()],
+            allowed_tool_groups: vec!["read".to_owned(), "test".to_owned(), "terminal-readonly".to_owned()],
+            allowed_path_patterns: vec!["**/*".to_owned()],
+            mutates_files: false,
+            requires_approval: false,
+            default_runner: "patch-runner-dry-run".to_owned(),
+            borrowed_from: "Roo Debug mode concept".to_owned(),
+        },
+        DevModeDescriptor {
+            slug: "code.architect".to_owned(),
+            title: "Architect Code".to_owned(),
+            intent: "analyze".to_owned(),
+            task_kinds: vec!["code.plan".to_owned(), "architecture.review".to_owned()],
+            allowed_tool_groups: vec!["read".to_owned(), "search".to_owned(), "plan".to_owned()],
+            allowed_path_patterns: vec!["**/*".to_owned()],
+            mutates_files: false,
+            requires_approval: false,
+            default_runner: "patch-runner-dry-run".to_owned(),
+            borrowed_from: "Roo Architect mode concept".to_owned(),
+        },
+        DevModeDescriptor {
+            slug: "self.evolve".to_owned(),
+            title: "Self Evolution".to_owned(),
+            intent: "patch".to_owned(),
+            task_kinds: vec!["self.evolve".to_owned(), "nexus.patch".to_owned()],
+            allowed_tool_groups: vec!["read".to_owned(), "search".to_owned(), "edit".to_owned(), "test".to_owned(), "audit".to_owned()],
+            allowed_path_patterns: vec!["apps/**".to_owned(), "crates/**".to_owned(), "docs/**".to_owned(), "infra/**".to_owned()],
+            mutates_files: true,
+            requires_approval: true,
+            default_runner: "patch-runner-embedded-agent".to_owned(),
+            borrowed_from: "Nexus self-evolution extension of Roo modes".to_owned(),
+        },
+    ]
+}
+
+pub fn select_dev_mode(intent: &DevIntent, prompt: &str) -> DevModeDescriptor {
+    let lower = prompt.to_lowercase();
+    let preferred_slug = if lower.contains("self") || lower.contains("nexus") || lower.contains("自我") || lower.contains("进化") {
+        Some("self.evolve")
+    } else if lower.contains("verify") || lower.contains("test") || lower.contains("验证") || lower.contains("测试") {
+        Some("code.verify")
+    } else if lower.contains("architect") || lower.contains("design") || lower.contains("架构") || lower.contains("方案") {
+        Some("code.architect")
+    } else if matches!(intent, DevIntent::Patch | DevIntent::Refactor) {
+        Some("code.patch")
+    } else if matches!(intent, DevIntent::Analyze) {
+        Some("code.inspect")
+    } else {
+        None
+    };
+
+    let catalog = list_dev_mode_catalog();
+    if let Some(slug) = preferred_slug {
+        if let Some(mode) = catalog.iter().find(|mode| mode.slug == slug) {
+            return mode.clone();
+        }
+    }
+    catalog
+        .into_iter()
+        .find(|mode| mode.allows_intent(intent))
+        .unwrap_or_else(|| list_dev_mode_catalog()[0].clone())
+}
 pub fn build_dev_runtime() -> Box<dyn DevRuntime> {
     Box::new(ScaffoldDevRuntime)
 }
@@ -617,18 +817,18 @@ fn build_patch_schema(spec: &DevTaskSpec) -> PatchPlanSchema {
 
 pub fn parse_dev_task(prompt: &str) -> DevTaskSpec {
     let lower = prompt.to_lowercase();
-    let intent = if contains_any(&lower, &["refactor"]) || contains_raw(prompt, &["重构"]) {
+    let intent = if contains_any(&lower, &["refactor"]) || contains_raw(prompt, &["閲嶆瀯"]) {
         DevIntent::Refactor
     } else if contains_any(&lower, &["fix", "patch", "implement", "change", "edit"])
-        || contains_raw(prompt, &["修改", "修复", "实现", "开发"])
+        || contains_raw(prompt, &["淇敼", "淇", "瀹炵幇", "寮€鍙?])
     {
         DevIntent::Patch
     } else if contains_any(&lower, &["test", "verify", "build", "check"])
-        || contains_raw(prompt, &["检查", "验证", "测试", "构建"])
+        || contains_raw(prompt, &["妫€鏌?, "楠岃瘉", "娴嬭瘯", "鏋勫缓"])
     {
         DevIntent::Verify
     } else if contains_any(&lower, &["analyze", "read code", "inspect"])
-        || contains_raw(prompt, &["分析", "看代码", "阅读代码"])
+        || contains_raw(prompt, &["鍒嗘瀽", "鐪嬩唬鐮?, "闃呰浠ｇ爜"])
     {
         DevIntent::Analyze
     } else {
@@ -640,6 +840,7 @@ pub fn parse_dev_task(prompt: &str) -> DevTaskSpec {
     let repo_scope = infer_repo_scope(prompt, &file_targets, &module_targets);
     let execution_mode = infer_execution_mode(&intent);
     let patch_strategy = infer_patch_strategy(&intent, &repo_scope);
+    let mode = select_dev_mode(&intent, prompt);
 
     let recommended_steps = match intent {
         DevIntent::Analyze => vec![
@@ -670,6 +871,7 @@ pub fn parse_dev_task(prompt: &str) -> DevTaskSpec {
 
     DevTaskSpec {
         prompt: prompt.to_owned(),
+        mode,
         intent,
         execution_mode,
         repo_scope,
@@ -697,7 +899,7 @@ fn infer_repo_scope(
 ) -> RepoScope {
     let lower = prompt.to_lowercase();
     if contains_any(&lower, &["workspace", "whole repo", "entire repo", "all files"])
-        || contains_raw(prompt, &["全仓库", "整个仓库", "所有文件"])
+        || contains_raw(prompt, &["鍏ㄤ粨搴?, "鏁翠釜浠撳簱", "鎵€鏈夋枃浠?])
     {
         RepoScope::WorkspaceWide
     } else if module_targets.len() > 1 || file_targets.len() > 3 {
@@ -1101,7 +1303,6 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
     match spec.patch_strategy {
         PatchStrategy::None => vec![PatchFileRecord {
             path: "read-only".to_owned(),
-            hunks: vec![],
             role: "inspection".to_owned(),
             mutation_boundary: "no file mutation".to_owned(),
             verification_target: "findings only".to_owned(),
@@ -1109,7 +1310,6 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
         }],
         PatchStrategy::VerificationPass => vec![PatchFileRecord {
             path: "verification-only".to_owned(),
-            hunks: vec![],
             role: "verification".to_owned(),
             mutation_boundary: "checks only".to_owned(),
             verification_target: "verification command path".to_owned(),
@@ -1122,7 +1322,6 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
                     .enumerate()
                     .map(|(index, path)| PatchFileRecord {
                         path: path.clone(),
-                        hunks: vec![],
                         role: "primary patch target".to_owned(),
                         mutation_boundary: "minimal in-place diff only".to_owned(),
                         verification_target: format!("focused verification for {}", path),
@@ -1132,7 +1331,6 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
             } else {
                 vec![PatchFileRecord {
                     path: "unknown".to_owned(),
-                    hunks: vec![],
                     role: "discovery target".to_owned(),
                     mutation_boundary: "locate file before edit".to_owned(),
                     verification_target: "focused verification after file selection".to_owned(),
@@ -1147,7 +1345,6 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
                     .enumerate()
                     .map(|(index, path)| PatchFileRecord {
                         path: path.clone(),
-                        hunks: vec![],
                         role: "boundary extraction target".to_owned(),
                         mutation_boundary: "incremental seam extraction only".to_owned(),
                         verification_target: format!("incremental verification for {}", path),
@@ -1160,7 +1357,6 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
                     .enumerate()
                     .map(|(index, module)| PatchFileRecord {
                         path: module.clone(),
-                        hunks: vec![],
                         role: "module boundary target".to_owned(),
                         mutation_boundary: "extract runtime seam before cleanup".to_owned(),
                         verification_target: format!("module-level verification for {}", module),
@@ -1170,7 +1366,6 @@ fn build_patch_file_records(spec: &DevTaskSpec) -> Vec<PatchFileRecord> {
             } else {
                 vec![PatchFileRecord {
                     path: "unknown".to_owned(),
-                    hunks: vec![],
                     role: "boundary discovery".to_owned(),
                     mutation_boundary: "identify seam before moving code".to_owned(),
                     verification_target: "verification after seam discovery".to_owned(),
@@ -1598,3 +1793,15 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
 fn contains_raw(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
+
+
+
+
+
+
+
+
+
+
+
+

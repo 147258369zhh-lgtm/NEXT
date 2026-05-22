@@ -1,4 +1,4 @@
-# Nexus
+﻿# Nexus
 
 Nexus is a Windows-first desktop agent hub inspired by the attached design document. This scaffold implements the first-stage monorepo, core Rust crates, and a minimal text conversation loop through Tauri.
 
@@ -37,6 +37,9 @@ Progress tracking documents:
 - architecture notes: `docs/architecture.md`
 - design progress backup: `docs/design-progress-backup.md`
 - long-lived development targets: `docs/development-targets.md`
+- integration-first architecture: `docs/integration-first-architecture.md`
+- third-party research roadmap: `docs/third-party-research-roadmap.md`
+- light-surface/heavy-runtime UI principle: `docs/ui-light-surface-heavy-runtime.md`
 - reuse and borrow plan: `docs/reuse-plan.md`
 
 To switch to an OpenAI-compatible provider:
@@ -101,3 +104,4 @@ Playwright bridge status:
 - the browser bridge worker can run in:
   - scaffold fallback mode
   - real Playwright mode when `NEXUS_BROWSER_BRIDGE_MODE=playwright`
+

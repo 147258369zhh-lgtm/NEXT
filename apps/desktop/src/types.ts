@@ -1,6 +1,6 @@
 export type Locale = "zh-CN" | "en-US";
 export type SideView = "modules" | "history";
-export type MainView = "workspace" | "control";
+export type MainView = "workspace" | "search" | "skills" | "plugins" | "automation" | "projects" | "control";
 
 export type IconName =
   | "modules"
@@ -65,6 +65,39 @@ export type TaskWorkspace = {
   steps: TaskStepView[];
 };
 
+export type ExecutionRequestView = {
+  task_id: string;
+  executor_id: string;
+  route: string;
+  task_kind: string;
+  prompt: string;
+  risk_level: string;
+  approval_id?: string | null;
+  memory_enabled: boolean;
+};
+
+export type ExecutionArtifact = {
+  kind: string;
+  title: string;
+  summary: string;
+  payload: string;
+};
+
+export type StructuredExecutionResult = {
+  executor_id: string;
+  status: string;
+  summary: string;
+  risk_level: string;
+  steps: string[];
+  artifacts: ExecutionArtifact[];
+  audit_refs: string[];
+  memory_candidates: string[];
+  follow_up_suggestions: string[];
+};
+export type ExecutionSnapshot = {
+  execution_request: ExecutionRequestView;
+  execution_result: StructuredExecutionResult;
+};
 export type ChatPayload = {
   task: TaskView;
   reply: string;
@@ -92,7 +125,17 @@ export type ModuleDescriptor = {
 export type ExecutorDescriptor = {
   id: string;
   title: string;
+  family: string;
+  summary: string;
   route_scope: string[];
+  task_kinds: string[];
+  risk_ceiling: string;
+  integration_level: string;
+  input_schema: string;
+  output_schema: string;
+  supports_dry_run: boolean;
+  supports_rollback: boolean;
+  requires_approval: boolean;
   enabled: boolean;
 };
 
@@ -114,66 +157,41 @@ export type BrowserRuntimeDescriptor = {
   enabled: boolean;
 };
 
+export type DevModeDescriptor = {
+  slug: string;
+  title: string;
+  intent: string;
+  task_kinds: string[];
+  allowed_tool_groups: string[];
+  allowed_path_patterns: string[];
+  mutates_files: boolean;
+  requires_approval: boolean;
+  default_runner: string;
+  borrowed_from: string;
+};
 export type PatchRunnerDescriptor = {
   id: string;
   title: string;
   mode: string;
+  family: string;
+  source: string;
+  repository: string;
+  license: string;
+  review_status: string;
+  integration_level: string;
   mutates_files: boolean;
+  requires_approval: boolean;
+  supports_dry_run: boolean;
   enabled: boolean;
 };
 
-export type SkillMetadata = {
-  name: string;
-  version: string;
-  author?: string;
-  description?: string;
-};
-
-export type Skill = {
-  id: string;
-  metadata: SkillMetadata;
-  triggers: string[];
-  actions: string[];
-  risk_level: string;
-  execution_mode: string;
-  path: string;
-};
-
-export type McpTool = {
-  name: string;
-  description: string;
-  input_schema: any;
-};
-
-export type McpServer = {
-  id: string;
-  name: string;
-  status: string;
-  tools: McpTool[];
-};
-
-export type McpServerDescriptor = {
-  id: string;
-  name: string;
-  command: string;
-  args: string[];
-};
-
-export type ConnectorStatus = {
-  id: string;
-  name: string;
-  port: number;
-  status: "online" | "offline";
-  last_activity?: string;
-};
-
-export type MemoryCard = {
+export type AutomationView = {
   id: string;
   title: string;
-  content: string;
-  tags: string[];
-  importance: number;
+  description: string;
+  enabled: boolean;
   created_at: string;
+  updated_at: string;
 };
 
 export type ModuleAction = {
@@ -214,15 +232,13 @@ export type CopyBundle = {
   controlProviders: string;
   controlBrowserRuntimes: string;
   controlPatchRunners: string;
-  controlSkills: string;
-  controlConnectors: string;
-  controlMcpTools: string;
-  controlMemory: string;
+  controlDevModes: string;
   controlPatchRunnerActivity: string;
   controlPatchRunnerStatus: string;
   controlBrowserActivity: string;
   controlDevActivity: string;
   controlRuntime: string;
+  controlConnectors: string;
   controlVoice: string;
   controlAudit: string;
   controlPlaceholder: string;
@@ -238,6 +254,9 @@ export type CopyBundle = {
   sending: string;
   noMessagesTitle: string;
   noMessagesDesc: string;
+  userRole: string;
+  assistantRole: string;
+  systemRole: string;
   pendingItems: string;
   noDataTitle: string;
   noPending: string;
@@ -295,7 +314,9 @@ export type CopyBundle = {
   patchHunks: string;
   patchSets: string;
   patchContract: string;
+  executionResult: string;
   artifacts: string;
+  followUpSuggestions: string;
   verificationTargets: string;
   latestActivity: string;
   taskPlan: string;
@@ -326,7 +347,9 @@ export type CopyBundle = {
   noPatchHunks: string;
   noPatchSets: string;
   noPatchContract: string;
+  noExecutionResult: string;
   noArtifacts: string;
+  noFollowUpSuggestions: string;
   noVerificationTargets: string;
   noActivity: string;
   noTaskHistory: string;
@@ -351,4 +374,104 @@ export type CopyBundle = {
   queuedMsg: string;
   langZh: string;
   langEn: string;
+  navChat: string;
+  navSearch: string;
+  navSkills: string;
+  navPlugins: string;
+  navAutomation: string;
+  navProjects: string;
+  navSettings: string;
+  projectSection: string;
+  currentThread: string;
+  attachAction: string;
+  fullAccess: string;
+  autoCode: string;
+  statusProgress: string;
+  readyStatus: string;
+  cleanSurfaceHint: string;
+  statusOutput: string;
+  localPreview: string;
+  statusBrowser: string;
+  browserPreview: string;
+  statusRuntime: string;
+  statusSource: string;
+  localRuntime: string;
+  searchTitle: string;
+  searchDesc: string;
+  searchPlaceholder: string;
+  skillsTitle: string;
+  skillsDesc: string;
+  pluginsTitle: string;
+  pluginsDesc: string;
+  automationTitle: string;
+  automationDesc: string;
+  automationQueue: string;
+  automationEmpty: string;
+  projectsTitle: string;
+  projectsDesc: string;
+  projectNextDesc: string;
+  searchResults: string;
+  searchResultCount: string;
+  noSearchResults: string;
+  browserHeadless: string;
+  automationDraft: string;
+  automationDraftDefault: string;
+  automationDraftDesc: string;
+  automationVerifyDraft: string;
+  automationMemoryDraft: string;
+  createVerificationAutomation: string;
+  createMemoryAutomation: string;
+  savedAutomations: string;
+  noSavedAutomations: string;
+  deleteAction: string;
+  allFilter: string;
+  openProjectSummary: string;
+  inspectProjectTargets: string;
+};
+
+export type SkillMetadata = {
+  name: string;
+  version: string;
+  author?: string;
+  description?: string;
+};
+
+export type Skill = {
+  id: string;
+  metadata: SkillMetadata;
+  triggers: string[];
+  actions: string[];
+  risk_level: string;
+  execution_mode: string;
+  path: string;
+  enabled?: boolean;
+};
+
+export type McpTool = {
+  name: string;
+  description: string;
+  input_schema: any;
+};
+
+export type McpServer = {
+  id: string;
+  name: string;
+  status: string;
+  tools: McpTool[];
+};
+
+export type McpServerDescriptor = {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  enabled?: boolean;
+};
+
+export type ConnectorStatus = {
+  id: string;
+  name: string;
+  port: number;
+  status: "online" | "offline";
+  last_activity?: string;
 };

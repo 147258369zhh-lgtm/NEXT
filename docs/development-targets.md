@@ -1,4 +1,4 @@
-# Development Targets
+﻿# Development Targets
 
 Last updated: 2026-04-24
 
@@ -95,6 +95,11 @@ Concrete work should usually be implemented through executors, for example:
 - connector executor
 
 This keeps the system more stable and easier to audit than a fully agent-per-task design.
+
+Executor descriptors should remain rich enough to support embedded third-party capabilities. At minimum they should expose family, route scope, task kinds, risk ceiling, integration level, input/output schemas, dry-run support, rollback support, approval requirements, and enabled state. Execution requests and results should also remain structured, carrying executor id, task kind, risk level, artifacts, audit references, memory candidates, and follow-up suggestions. The UI may present a simplified view, but the runtime descriptor and structured execution result are the long-term contracts.
+
+Patch runners inside 
+exus-dev should also stay registry-driven. The default runner may be a safe dry-run scaffold, while reserved embedded-agent runners define the adapter boundary for future Cline/Roo/OpenCode/Aider-style code agents without forcing those implementations into the runtime prematurely.
 
 ## 4. Pluggability is a hard requirement
 
@@ -269,3 +274,10 @@ Before implementing a new feature, the preferred question is:
 > should this be a pluggable interface, a runtime component, a strategy, or just a UI surface?
 
 If the answer suggests more than one likely implementation over time, it should not be hardcoded.
+
+
+
+
+## Dev Mode Catalog Note
+
+Dev modes are now a first-class catalog in `nexus-dev`. Future code-agent borrowing should map into these modes first, then into patch runners. Mode permissions should eventually be enforced by the runtime, not only displayed by the UI.

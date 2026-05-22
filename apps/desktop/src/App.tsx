@@ -4,6 +4,7 @@ import { ChatWorkspace } from "./components/ChatWorkspace";
 import { ControlCenter } from "./components/ControlCenter";
 import { SideRail } from "./components/SideRail";
 import { Topbar } from "./components/Topbar";
+import { SecondaryWorkspace } from "./components/SecondaryWorkspace";
 import { I18N, getInitialLocale } from "./i18n";
 import type {
   ApprovalView,
@@ -20,17 +21,22 @@ import type {
   ModuleStatus,
   PatchRunnerDescriptor,
   ProviderDescriptor,
+  SideView,
+  TaskView,
+  TaskWorkspace,
   Skill,
   ConnectorStatus,
   McpServerDescriptor,
-  MemoryCard,
-  TaskView,
-  TaskWorkspace
+  DevModeDescriptor,
+  AutomationView,
+  StructuredExecutionResult,
+  ExecutionSnapshot
 } from "./types";
 
 export default function App() {
   const [locale, setLocale] = useState<Locale>(getInitialLocale);
   const [mainView, setMainView] = useState<MainView>("workspace");
+  const [sideView, setSideView] = useState<SideView>("modules");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -52,9 +58,15 @@ export default function App() {
   const [providers, setProviders] = useState<ProviderDescriptor[]>([]);
   const [browserRuntimes, setBrowserRuntimes] = useState<BrowserRuntimeDescriptor[]>([]);
   const [patchRunners, setPatchRunners] = useState<PatchRunnerDescriptor[]>([]);
+
+  // Integrated states for capability and external modules
   const [skills, setSkills] = useState<Skill[]>([]);
-  const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerDescriptor[]>([]);
+  const [connectors, setConnectors] = useState<ConnectorStatus[]>([]);
+  const [devModes, setDevModes] = useState<DevModeDescriptor[]>([]);
+  const [automations, setAutomations] = useState<AutomationView[]>([]);
+  const [latestExecution, setLatestExecution] = useState<StructuredExecutionResult | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const t = useMemo(() => I18N[locale], [locale]);
 
@@ -65,6 +77,14 @@ export default function App() {
   useEffect(() => {
     void refreshAll();
   }, []);
+
+  // Auto-dismiss the sleek floating error toast after 6 seconds
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
 
   function applyModuleStatus(status: ModuleStatus) {
     setProviderSource(status.provider_source);
@@ -89,8 +109,10 @@ export default function App() {
       refreshBrowserRuntimes(),
       refreshPatchRunners(),
       refreshSkills(),
+      refreshMcpServers(),
       refreshConnectors(),
-      refreshMcpServers()
+      refreshDevModes(),
+      refreshAutomations()
     ]);
   }
 
@@ -104,18 +126,20 @@ export default function App() {
 
   async function refreshHistory() {
     try {
-      const [tasks, approvals, memoryCardsList, audits, nextWorkspace] = await Promise.all([
+      const [tasks, approvals, memoryCardsList, audits, nextWorkspace, snapshot] = await Promise.all([
         invoke<TaskView[]>("list_recent_tasks", { limit: 12 }),
         invoke<ApprovalView[]>("list_recent_approvals", { limit: 12 }),
         invoke<MemoryView[]>("list_recent_memory_cards", { limit: 12 }),
         invoke<AuditView[]>("list_recent_audits", { limit: 18 }),
-        invoke<TaskWorkspace | null>("get_latest_workspace")
+        invoke<TaskWorkspace | null>("get_latest_workspace"),
+        invoke<ExecutionSnapshot | null>("get_latest_execution_snapshot")
       ]);
       setRecentTasks(tasks);
       setRecentApprovals(approvals);
       setRecentMemory(memoryCardsList);
       setRecentAudits(audits);
       setWorkspace(nextWorkspace);
+      setLatestExecution(snapshot ? snapshot.execution_result : null);
     } catch {
       setError(t.failedLoadHistory);
     }
@@ -191,35 +215,75 @@ export default function App() {
   async function refreshSkills() {
     try {
       setSkills(await invoke<Skill[]>("list_skills"));
-    } catch {
-      setError(t.failedModuleStatus);
-    }
-  }
-
-  async function refreshConnectors() {
-    try {
-      // 模拟数据，待后端指令补齐
-      setConnectors([
-        { id: "webhook-1", name: "Standard Webhook", port: 3333, status: "online" }
-      ]);
-    } catch {
-      setError(t.failedModuleStatus);
+    } catch (err) {
+      console.error("Failed to load skills", err);
     }
   }
 
   async function refreshMcpServers() {
     try {
       setMcpServers(await invoke<McpServerDescriptor[]>("list_mcp_servers"));
-    } catch {
-      setError(t.failedModuleStatus);
+    } catch (err) {
+      console.error("Failed to load MCP servers", err);
     }
   }
 
-  async function reloadRiskPolicy(level?: string) {
+  async function refreshConnectors() {
+    try {
+      setConnectors(await invoke<ConnectorStatus[]>("list_connectors"));
+    } catch (err) {
+      console.error("Failed to load connectors", err);
+    }
+  }
+
+  async function refreshDevModes() {
+    try {
+      setDevModes(await invoke<DevModeDescriptor[]>("list_dev_modes"));
+    } catch (err) {
+      console.error("Failed to load dev modes", err);
+    }
+  }
+
+  async function refreshAutomations() {
+    try {
+      setAutomations(await invoke<AutomationView[]>("list_automations"));
+    } catch (err) {
+      console.error("Failed to load automations", err);
+    }
+  }
+
+  async function handleCreateAutomation(title: string, description: string) {
+    try {
+      await invoke("create_automation", { title, description });
+      await refreshAutomations();
+    } catch (err) {
+      setError(t.moduleToggleFailed);
+    }
+  }
+
+  async function handleToggleAutomation(automationId: string, enabled: boolean) {
+    try {
+      await invoke("set_automation_enabled", { automationId, enabled });
+      await refreshAutomations();
+    } catch (err) {
+      setError(t.moduleToggleFailed);
+    }
+  }
+
+  async function handleDeleteAutomation(automationId: string) {
+    try {
+      await invoke("delete_automation", { automationId });
+      await refreshAutomations();
+    } catch (err) {
+      setError(t.moduleToggleFailed);
+    }
+  }
+
+  async function reloadRiskPolicy() {
     setLoading(true);
     setError(null);
     try {
-      setRiskPolicySource(await invoke<string>("reload_risk_policy", { path: level || null }));
+      setRiskPolicySource(await invoke<string>("reload_risk_policy", { path: null }));
       await refreshModuleStatus();
     } catch {
       setError(t.riskReloadFailed);
@@ -228,14 +292,14 @@ export default function App() {
     }
   }
 
-  async function reloadProvider(mode: "mock" | "openai") {
+  async function reloadProvider(mode: string) {
     setLoading(true);
     setError(null);
     try {
       setProviderSource(await invoke<string>("reload_provider", { mode }));
       await refreshModuleStatus();
-    } catch {
-      setError(t.providerReloadFailed);
+    } catch (err: any) {
+      setError(err?.toString() || t.providerReloadFailed);
     } finally {
       setLoading(false);
     }
@@ -324,8 +388,69 @@ export default function App() {
     }
   }
 
+  const moduleCards: ModuleCardData[] = [
+    {
+      id: "risk-policy",
+      title: t.riskPolicy,
+      subtitle: t.riskPolicySub,
+      detail: riskPolicySource,
+      icon: "risk",
+      actions: [{ label: t.reload, onClick: () => void reloadRiskPolicy() }]
+    },
+    {
+      id: "provider",
+      title: t.providerModule,
+      subtitle: t.providerSub,
+      detail: providerSource,
+      icon: "provider",
+      actions: [
+        { label: t.useMock, onClick: () => void reloadProvider("mock") },
+        { label: t.useOpenai, onClick: () => void reloadProvider("openai") }
+      ]
+    },
+    {
+      id: "approvals",
+      title: t.approvalQueue,
+      subtitle: pendingCount > 0 ? t.approvalSubAttention : t.approvalSubHealthy,
+      detail: `${pendingCount} ${t.pendingCountText}`,
+      icon: "approval",
+      actions: [{ label: t.refresh, onClick: () => void refreshApprovals() }]
+    },
+    {
+      id: "brain",
+      title: t.brainKernel,
+      subtitle: t.brainSub,
+      detail: `${t.lastRoutePrefix}: ${lastBrainRoute}`,
+      icon: "brain",
+      enabled: brainEnabled,
+      actions: [
+        {
+          label: brainEnabled ? t.disable : t.enable,
+          onClick: () => void toggleModule("brain", !brainEnabled)
+        },
+        { label: t.refresh, onClick: () => void refreshModuleStatus() }
+      ]
+    },
+    {
+      id: "memory",
+      title: t.memoryModule,
+      subtitle: t.memorySub,
+      detail: `${memoryCards} ${t.memoryCardsCount}`,
+      icon: "memory",
+      enabled: memoryEnabled,
+      actions: [
+        {
+          label: memoryEnabled ? t.disable : t.enable,
+          onClick: () => void toggleModule("memory", !memoryEnabled)
+        },
+        { label: t.refresh, onClick: () => void refreshModuleStatus() }
+      ]
+    }
+  ];
+
   return (
     <main className="app-shell">
+      {error ? <div className="quiet-error">{error}</div> : null}
       <section className="window-shell">
         <Topbar
           t={t}
@@ -340,16 +465,11 @@ export default function App() {
           <SideRail
             t={t}
             locale={locale}
-            loading={loading}
-            pendingApprovals={pendingApprovals}
-            recentTasks={recentTasks}
-            recentApprovals={recentApprovals}
-            recentMemory={recentMemory}
-            onRefreshApprovals={() => void refreshApprovals()}
-            onRefreshHistory={() => void refreshHistory()}
-            onApproval={(approvalId, approved) =>
-              void handleApproval(approvalId, approved)
-            }
+            mainView={mainView}
+            pendingCount={pendingCount}
+            memoryCards={memoryCards}
+            onLocaleChange={setLocale}
+            onMainViewChange={setMainView}
           />
 
           <section className="chat-column">
@@ -359,8 +479,9 @@ export default function App() {
                 workspace={workspace}
                 messages={messages}
                 audits={recentAudits}
+                latestExecution={latestExecution}
               />
-            ) : (
+            ) : mainView === "control" ? (
               <ControlCenter
                 t={t}
                 moduleStatus={{
@@ -377,33 +498,50 @@ export default function App() {
                 providers={providers}
                 browserRuntimes={browserRuntimes}
                 patchRunners={patchRunners}
+                devModes={devModes}
+                audits={recentAudits}
+                onReloadProvider={reloadProvider}
+              />
+            ) : (
+              <SecondaryWorkspace
+                t={t}
+                view={mainView as any}
+                recentTasks={recentTasks}
+                recentMemory={recentMemory}
+                audits={recentAudits}
+                modules={modules}
+                executors={executors}
+                providers={providers}
+                browserRuntimes={browserRuntimes}
+                patchRunners={patchRunners}
+                devModes={devModes}
+                automations={automations}
                 skills={skills}
                 connectors={connectors}
                 mcpServers={mcpServers}
-                memoryCards={recentMemory as any}
-                audits={recentAudits}
-                onReloadRiskPolicy={(level) => void reloadRiskPolicy(level)}
-                onReloadProvider={(mode) => void reloadProvider(mode)}
-                onToggleModule={(mod, en) => void toggleModule(mod, en)}
-                loading={loading}
+                onCreateAutomation={handleCreateAutomation}
+                onToggleAutomation={handleToggleAutomation}
+                onDeleteAutomation={handleDeleteAutomation}
               />
             )}
 
-            <form className="chat-input" onSubmit={sendMessage}>
-              <textarea
-                value={message}
-                onChange={(event) => setMessage(event.target.value)}
-                placeholder={t.inputPlaceholder}
-                rows={3}
-              />
-              <button type="submit" disabled={loading}>
-                {loading ? t.sending : t.send}
-              </button>
-              {error ? <p className="error-text">{error}</p> : null}
-            </form>
+            {mainView === "workspace" && (
+              <form className="chat-input" onSubmit={sendMessage}>
+                <textarea
+                  value={message}
+                  onChange={(event) => setMessage(event.target.value)}
+                  placeholder={t.inputPlaceholder}
+                  rows={3}
+                />
+                <button type="submit" disabled={loading}>
+                  {loading ? t.sending : t.send}
+                </button>
+              </form>
+            )}
           </section>
         </section>
       </section>
     </main>
   );
 }
+

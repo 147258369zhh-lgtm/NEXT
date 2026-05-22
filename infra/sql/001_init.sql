@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS tasks (
+﻿CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   goal TEXT NOT NULL,
@@ -57,4 +57,21 @@ CREATE TABLE IF NOT EXISTS task_steps (
   route TEXT NOT NULL DEFAULT 'chat',
   created_at TEXT NOT NULL,
   completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS structured_execution_results (
+  task_id TEXT PRIMARY KEY,
+  request_json TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS automations (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  enabled INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 );

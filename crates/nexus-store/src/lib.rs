@@ -1,4 +1,4 @@
-use std::path::Path;
+﻿use std::path::Path;
 
 use anyhow::Result;
 use chrono::Utc;
@@ -12,6 +12,16 @@ use uuid::Uuid;
 
 pub struct NexusStore {
     conn: Connection,
+}
+
+#[derive(Debug, Clone)]
+pub struct AutomationRecord {
+    pub id: Uuid,
+    pub title: String,
+    pub description: String,
+    pub enabled: bool,
+    pub created_at: chrono::DateTime<Utc>,
+    pub updated_at: chrono::DateTime<Utc>,
 }
 
 impl NexusStore {
@@ -107,6 +117,97 @@ impl NexusStore {
             audits.push(row?);
         }
         Ok(audits)
+    }
+    pub fn upsert_structured_execution_result(
+        &self,
+        task_id: Uuid,
+        request_json: &str,
+        result_json: &str,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO structured_execution_results (task_id, request_json, result_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)
+             ON CONFLICT(task_id) DO UPDATE SET request_json = excluded.request_json, result_json = excluded.result_json, updated_at = excluded.updated_at",
+            params![task_id.to_string(), request_json, result_json, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn find_structured_execution_result(
+        &self,
+        task_id: Uuid,
+    ) -> Result<Option<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT request_json, result_json FROM structured_execution_results WHERE task_id = ?1",
+        )?;
+        let snapshot = stmt
+            .query_row([task_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional()?;
+        Ok(snapshot)
+    }
+
+    pub fn latest_structured_execution_result(&self) -> Result<Option<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT request_json, result_json FROM structured_execution_results ORDER BY updated_at DESC LIMIT 1",
+        )?;
+        let snapshot = stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+        Ok(snapshot)
+    }
+
+    pub fn create_automation(&self, title: &str, description: &str) -> Result<AutomationRecord> {
+        let now = Utc::now();
+        let record = AutomationRecord {
+            id: Uuid::new_v4(),
+            title: title.to_owned(),
+            description: description.to_owned(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+        self.conn.execute(
+            "INSERT INTO automations (id, title, description, enabled, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                record.id.to_string(),
+                record.title,
+                record.description,
+                bool_to_int(record.enabled),
+                record.created_at.to_rfc3339(),
+                record.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(record)
+    }
+
+    pub fn list_automations(&self) -> Result<Vec<AutomationRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, description, enabled, created_at, updated_at
+             FROM automations ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map([], map_automation_row)?;
+        let mut automations = Vec::new();
+        for row in rows {
+            automations.push(row?);
+        }
+        Ok(automations)
+    }
+
+    pub fn set_automation_enabled(&self, automation_id: Uuid, enabled: bool) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn.execute(
+            "UPDATE automations SET enabled = ?1, updated_at = ?2 WHERE id = ?3",
+            params![bool_to_int(enabled), now, automation_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_automation(&self, automation_id: Uuid) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM automations WHERE id = ?1",
+            params![automation_id.to_string()],
+        )?;
+        Ok(())
     }
 
     pub fn insert_approval(&self, approval: &ApprovalRecord) -> Result<()> {
@@ -347,6 +448,36 @@ fn stringify_task_step_status(status: &TaskStepStatus) -> &'static str {
         TaskStepStatus::Completed => "completed",
         TaskStepStatus::Blocked => "blocked",
     }
+}
+
+fn bool_to_int(value: bool) -> i64 {
+    if value { 1 } else { 0 }
+}
+
+fn map_automation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationRecord> {
+    use rusqlite::types::Type;
+
+    let id_raw: String = row.get(0)?;
+    let created_raw: String = row.get(4)?;
+    let updated_raw: String = row.get(5)?;
+    let id = Uuid::parse_str(&id_raw)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))?;
+    let created_at = chrono::DateTime::parse_from_rfc3339(&created_raw)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(4, Type::Text, Box::new(err)))?;
+    let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_raw)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(5, Type::Text, Box::new(err)))?;
+    let enabled_raw: i64 = row.get(3)?;
+
+    Ok(AutomationRecord {
+        id,
+        title: row.get(1)?,
+        description: row.get(2)?,
+        enabled: enabled_raw != 0,
+        created_at,
+        updated_at,
+    })
 }
 
 fn map_approval_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalRecord> {
@@ -603,3 +734,4 @@ fn parse_task_step_status(raw: &str) -> Result<TaskStepStatus, std::io::Error> {
         )),
     }
 }
+

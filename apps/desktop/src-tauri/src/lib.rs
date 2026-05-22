@@ -1,27 +1,23 @@
-use std::{fs, path::PathBuf};
-use tauri::{Manager, State};
-use std::sync::Arc;
+use std::{fs, path::PathBuf, sync::Arc};
 
-pub use nexus_exec::{
-    AppRuntime, ExecutorDescriptor, ModuleDescriptor, ModuleStatus, PatchRunnerDescriptor,
+use nexus_exec::{
+    resolve_risk_policy_path, AppRuntime, AutomationView, ChatResponse, DevModeDescriptor,
+    ExecutionSnapshot, ExecutorDescriptor, ModuleDescriptor, ModuleStatus, PatchRunnerDescriptor,
     TaskWorkspace,
-    resolve_risk_policy_path,
 };
-pub use nexus_skill;
-pub use nexus_connector;
-
 use nexus_browser::BrowserRuntimeDescriptor;
 use nexus_memory::MemoryCard;
-use nexus_protocol::{ApprovalRecord, AuditRecord, ChatResponse, TaskRecord};
+use nexus_protocol::{ApprovalRecord, AuditRecord, TaskRecord};
 use nexus_provider::ProviderDescriptor;
+use tauri::{Manager, State};
 
 #[tauri::command]
-async fn submit_chat(
+fn submit_chat(
     message: String,
     locale: Option<String>,
     runtime: State<'_, Arc<AppRuntime>>,
 ) -> Result<ChatResponse, String> {
-    runtime.submit_chat(message, locale).await
+    runtime.submit_chat(message, locale)
 }
 
 #[tauri::command]
@@ -67,13 +63,57 @@ fn get_latest_workspace(runtime: State<'_, Arc<AppRuntime>>) -> Result<Option<Ta
 }
 
 #[tauri::command]
-async fn resolve_approval(
+fn get_latest_execution_snapshot(
+    runtime: State<'_, Arc<AppRuntime>>,
+) -> Result<Option<ExecutionSnapshot>, String> {
+    runtime.get_latest_execution_snapshot()
+}
+
+#[tauri::command]
+fn list_automations(runtime: State<'_, Arc<AppRuntime>>) -> Result<Vec<AutomationView>, String> {
+    runtime.list_automations()
+}
+
+#[tauri::command]
+fn create_automation(
+    title: String,
+    description: String,
+    runtime: State<'_, Arc<AppRuntime>>,
+) -> Result<AutomationView, String> {
+    runtime.create_automation(title, description)
+}
+
+#[tauri::command]
+fn set_automation_enabled(
+    automation_id: String,
+    enabled: bool,
+    runtime: State<'_, Arc<AppRuntime>>,
+) -> Result<Vec<AutomationView>, String> {
+    let automation_id = automation_id
+        .parse()
+        .map_err(|err| format!("invalid automation id: {err}"))?;
+    runtime.set_automation_enabled(automation_id, enabled)
+}
+
+#[tauri::command]
+fn delete_automation(
+    automation_id: String,
+    runtime: State<'_, Arc<AppRuntime>>,
+) -> Result<Vec<AutomationView>, String> {
+    let automation_id = automation_id
+        .parse()
+        .map_err(|err| format!("invalid automation id: {err}"))?;
+    runtime.delete_automation(automation_id)
+}
+
+#[tauri::command]
+fn resolve_approval(
     approval_id: String,
     approved: bool,
     locale: Option<String>,
     runtime: State<'_, Arc<AppRuntime>>,
 ) -> Result<ChatResponse, String> {
-    runtime.resolve_approval(approval_id, approved, locale).await
+    runtime.resolve_approval(approval_id, approved, locale)
 }
 
 #[tauri::command]
@@ -137,6 +177,16 @@ fn list_patch_runners(runtime: State<'_, Arc<AppRuntime>>) -> Vec<PatchRunnerDes
 }
 
 #[tauri::command]
+fn list_dev_modes(runtime: State<'_, Arc<AppRuntime>>) -> Vec<DevModeDescriptor> {
+    runtime.list_dev_modes()
+}
+
+#[tauri::command]
+fn get_module_status(runtime: State<'_, Arc<AppRuntime>>) -> Result<ModuleStatus, String> {
+    runtime.get_module_status()
+}
+
+#[tauri::command]
 fn list_skills(runtime: State<'_, Arc<AppRuntime>>) -> Result<Vec<nexus_skill::Skill>, String> {
     runtime.list_skills()
 }
@@ -147,17 +197,21 @@ fn list_mcp_servers(runtime: State<'_, Arc<AppRuntime>>) -> Result<Vec<nexus_mcp
 }
 
 #[tauri::command]
-fn get_module_status(runtime: State<'_, Arc<AppRuntime>>) -> Result<ModuleStatus, String> {
-    runtime.get_module_status()
+fn list_connectors() -> Result<Vec<nexus_connector::ConnectorStatus>, String> {
+    Ok(nexus_connector::list_connectors())
 }
 
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let store_path = resolve_store_path(app.handle())?;
-            let runtime = Arc::new(AppRuntime::boot(store_path, nexus_exec::resolve_risk_policy_path(None))
+            if let Some(parent) = store_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+
+            let runtime = Arc::new(AppRuntime::boot(store_path, resolve_risk_policy_path(None))
                 .map_err(|e| e.to_string())?);
-            
+
             // 启动连接器后台服务
             let connector_runtime = Arc::clone(&runtime);
             tauri::async_runtime::spawn(async move {
@@ -168,6 +222,7 @@ pub fn run() {
             });
 
             app.manage(runtime);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -178,6 +233,11 @@ pub fn run() {
             list_recent_memory_cards,
             list_recent_audits,
             get_latest_workspace,
+            get_latest_execution_snapshot,
+            list_automations,
+            create_automation,
+            set_automation_enabled,
+            delete_automation,
             resolve_approval,
             reload_risk_policy,
             get_risk_policy_source,
@@ -189,9 +249,11 @@ pub fn run() {
             list_providers,
             list_browser_runtimes,
             list_patch_runners,
+            list_dev_modes,
+            get_module_status,
             list_skills,
             list_mcp_servers,
-            get_module_status
+            list_connectors
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Nexus desktop");

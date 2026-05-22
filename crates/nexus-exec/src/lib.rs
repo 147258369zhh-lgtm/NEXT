@@ -3,28 +3,26 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
-use async_trait::async_trait;
 
 use nexus_brain::{BrainDecision, BrainKernel, BrainRoute};
 use nexus_browser::{
     BrowserRuntimeConfig, BrowserRuntimeDescriptor, build_browser_runtime, list_browser_runtime_catalog,
     parse_browser_task,
 };
-use nexus_dev::{build_dev_runtime, list_patch_runner_catalog, parse_dev_task};
+use nexus_dev::{build_dev_runtime, list_dev_mode_catalog, list_patch_runner_catalog, parse_dev_task};
 use nexus_memory::{MemoryCard, MemoryService};
 use nexus_protocol::{
-    ApprovalRecord, ApprovalStatus, AuditRecord, ChatResponse, TaskRecord, TaskStatus,
-    TaskStepRecord,
+    ApprovalRecord, ApprovalStatus, AuditRecord, RiskLevel, TaskRecord, TaskStatus, TaskStepRecord,
 };
 use nexus_provider::{ChatProvider, ProviderConfig, ProviderDescriptor, build_provider, list_provider_catalog};
-use nexus_store::NexusStore;
+use nexus_store::{AutomationRecord, NexusStore};
 use nexus_task::{
     RiskPolicy, TaskService, default_risk_policy, load_risk_policy_from_file, requires_approval,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub use nexus_dev::PatchRunnerDescriptor;
+pub use nexus_dev::{DevModeDescriptor, PatchRunnerDescriptor};
 
 pub struct AppRuntime {
     store: Mutex<NexusStore>,
@@ -35,7 +33,7 @@ pub struct AppRuntime {
     last_brain_route: Mutex<String>,
     brain_enabled: Mutex<bool>,
     memory_enabled: Mutex<bool>,
-    skill_manager: Mutex<nexus_skill::SkillManager>,
+    pub skill_manager: Mutex<nexus_skill::SkillManager>,
     executors: Vec<Arc<dyn TaskExecutor>>,
 }
 
@@ -62,8 +60,37 @@ pub struct ModuleDescriptor {
 pub struct ExecutorDescriptor {
     pub id: String,
     pub title: String,
+    pub family: ExecutorFamily,
+    pub summary: String,
     pub route_scope: Vec<String>,
+    pub task_kinds: Vec<String>,
+    pub risk_ceiling: RiskLevel,
+    pub integration_level: IntegrationLevel,
+    pub input_schema: String,
+    pub output_schema: String,
+    pub supports_dry_run: bool,
+    pub supports_rollback: bool,
+    pub requires_approval: bool,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum ExecutorFamily {
+    Provider,
+    Development,
+    Browser,
+    Terminal,
+    File,
+    Memory,
+    SelfEvolution,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum IntegrationLevel {
+    Native,
+    Embedded,
+    Vendored,
+    ExternalBridge,
 }
 
 #[derive(Serialize)]
@@ -72,11 +99,72 @@ pub struct TaskWorkspace {
     steps: Vec<TaskStepRecord>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionSnapshot {
+    pub execution_request: ExecutionRequestView,
+    pub execution_result: StructuredExecutionResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionRequestView {
+    pub task_id: Uuid,
+    pub executor_id: String,
+    pub route: String,
+    pub task_kind: String,
+    pub prompt: String,
+    pub risk_level: RiskLevel,
+    pub approval_id: Option<Uuid>,
+    pub memory_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionArtifact {
+    pub kind: String,
+    pub title: String,
+    pub summary: String,
+    pub payload: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructuredExecutionResult {
+    pub executor_id: String,
+    pub status: String,
+    pub summary: String,
+    pub risk_level: RiskLevel,
+    pub steps: Vec<String>,
+    pub artifacts: Vec<ExecutionArtifact>,
+    pub audit_refs: Vec<Uuid>,
+    pub memory_candidates: Vec<String>,
+    pub follow_up_suggestions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatResponse {
+    pub task: TaskRecord,
+    pub reply: String,
+    pub approval: Option<ApprovalRecord>,
+    pub plan: Vec<TaskStepRecord>,
+    pub audits: Vec<AuditRecord>,
+    pub execution_request: Option<ExecutionRequestView>,
+    pub execution_result: Option<StructuredExecutionResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AutomationView {
+    pub id: Uuid,
+    pub title: String,
+    pub description: String,
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 struct ExecutionContext {
     task: TaskRecord,
     prompt: String,
     approval: Option<ApprovalRecord>,
     decision: BrainDecision,
+    request: ExecutionRequestView,
 }
 
 struct ExecutionResult {
@@ -85,32 +173,54 @@ struct ExecutionResult {
     approval: Option<ApprovalRecord>,
     plan: Vec<TaskStepRecord>,
     audits: Vec<nexus_protocol::AuditRecord>,
+    request: ExecutionRequestView,
+    structured: StructuredExecutionResult,
 }
 
-#[async_trait::async_trait]
+impl From<AutomationRecord> for AutomationView {
+    fn from(record: AutomationRecord) -> Self {
+        Self {
+            id: record.id,
+            title: record.title,
+            description: record.description,
+            enabled: record.enabled,
+            created_at: record.created_at.to_rfc3339(),
+            updated_at: record.updated_at.to_rfc3339(),
+        }
+    }
+}
+
 trait TaskExecutor: Send + Sync {
     fn descriptor(&self) -> ExecutorDescriptor;
     fn supports(&self, route: &BrainRoute, prompt: &str) -> bool;
-    async fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String>;
+    fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String>;
 }
 
 struct ProviderExecutor;
 struct BrowserExecutor;
 struct DevExecutor;
-struct McpExecutor;
 
-#[async_trait::async_trait]
 impl TaskExecutor for ProviderExecutor {
     fn descriptor(&self) -> ExecutorDescriptor {
         ExecutorDescriptor {
             id: "provider-default".to_owned(),
             title: "Provider Default Executor".to_owned(),
+            family: ExecutorFamily::Provider,
+            summary: "Routes low-risk conversational turns through the active chat provider.".to_owned(),
             route_scope: vec![
                 BrainRoute::Chat.as_str().to_owned(),
                 BrainRoute::TaskExecution.as_str().to_owned(),
                 BrainRoute::ApprovalDecision.as_str().to_owned(),
                 BrainRoute::Unknown.as_str().to_owned(),
             ],
+            task_kinds: vec!["chat".to_owned(), "fallback_task".to_owned(), "approval_decision".to_owned()],
+            risk_ceiling: RiskLevel::L2,
+            integration_level: IntegrationLevel::Native,
+            input_schema: "ChatRequest + BrainDecision + optional memory context".to_owned(),
+            output_schema: "ChatResponse with task, reply, plan, approval, and audits".to_owned(),
+            supports_dry_run: false,
+            supports_rollback: false,
+            requires_approval: false,
             enabled: true,
         }
     }
@@ -125,18 +235,27 @@ impl TaskExecutor for ProviderExecutor {
         )
     }
 
-    async fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
-        runtime.run_provider_turn(ctx).await
+    fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+        runtime.run_provider_turn(ctx)
     }
 }
 
-#[async_trait::async_trait]
 impl TaskExecutor for BrowserExecutor {
     fn descriptor(&self) -> ExecutorDescriptor {
         ExecutorDescriptor {
             id: "browser-executor".to_owned(),
             title: "Browser Executor".to_owned(),
+            family: ExecutorFamily::Browser,
+            summary: "Executes structured browser tasks through the selected browser runtime.".to_owned(),
             route_scope: vec![BrainRoute::TaskExecution.as_str().to_owned()],
+            task_kinds: vec!["browser.open".to_owned(), "browser.observe".to_owned(), "browser.act".to_owned()],
+            risk_ceiling: RiskLevel::L4,
+            integration_level: IntegrationLevel::ExternalBridge,
+            input_schema: "BrowserTaskSpec parsed from user prompt".to_owned(),
+            output_schema: "Browser execution summary, action log, and audit events".to_owned(),
+            supports_dry_run: true,
+            supports_rollback: false,
+            requires_approval: true,
             enabled: true,
         }
     }
@@ -145,18 +264,27 @@ impl TaskExecutor for BrowserExecutor {
         matches!(route, BrainRoute::TaskExecution) && is_browser_prompt(prompt)
     }
 
-    async fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
-        runtime.run_browser_turn(ctx).await
+    fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+        runtime.run_browser_turn(ctx)
     }
 }
 
-#[async_trait::async_trait]
 impl TaskExecutor for DevExecutor {
     fn descriptor(&self) -> ExecutorDescriptor {
         ExecutorDescriptor {
             id: "dev-executor".to_owned(),
             title: "Dev Executor".to_owned(),
+            family: ExecutorFamily::Development,
+            summary: "Plans and executes code-oriented tasks with patch-first artifacts.".to_owned(),
             route_scope: vec![BrainRoute::TaskExecution.as_str().to_owned()],
+            task_kinds: vec!["code.inspect".to_owned(), "code.patch".to_owned(), "code.verify".to_owned()],
+            risk_ceiling: RiskLevel::L4,
+            integration_level: IntegrationLevel::Native,
+            input_schema: "DevTaskSpec parsed from user prompt and workspace context".to_owned(),
+            output_schema: "Patch plan, artifacts, verification targets, and audit events".to_owned(),
+            supports_dry_run: true,
+            supports_rollback: true,
+            requires_approval: true,
             enabled: true,
         }
     }
@@ -165,41 +293,8 @@ impl TaskExecutor for DevExecutor {
         matches!(route, BrainRoute::TaskExecution) && is_dev_prompt(prompt)
     }
 
-    async fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
-        runtime.run_dev_turn(ctx).await
-    }
-}
-
-#[async_trait::async_trait]
-impl TaskExecutor for McpExecutor {
-    fn descriptor(&self) -> ExecutorDescriptor {
-        ExecutorDescriptor {
-            id: "mcp-executor".to_owned(),
-            title: "MCP Ecosystem Executor".to_owned(),
-            route_scope: vec![BrainRoute::TaskExecution.as_str().to_owned()],
-            enabled: true,
-        }
-    }
-
-    fn supports(&self, route: &BrainRoute, prompt: &str) -> bool {
-        matches!(route, BrainRoute::TaskExecution) && (prompt.contains("skill") || prompt.contains("mcp") || prompt.contains("openclaw") || prompt.contains("hermes"))
-    }
-
-    async fn execute(&self, _runtime: &AppRuntime, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
-        // Mocking the MCP/Skill execution
-        ctx.task.status = TaskStatus::Completed;
-        let reply = format!("MCP Ecosystem Executor picked up the task: {}. \n\nConnecting to external MCP servers and resolving skills...", ctx.prompt);
-        ctx.task.result_summary = Some(reply.clone());
-        let plan = vec![];
-        let audits = vec![];
-
-        Ok(ExecutionResult {
-            task: ctx.task,
-            reply,
-            approval: ctx.approval,
-            plan,
-            audits,
-        })
+    fn execute(&self, runtime: &AppRuntime, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+        runtime.run_dev_turn(ctx)
     }
 }
 
@@ -234,88 +329,66 @@ impl AppRuntime {
             executors: vec![
                 Arc::new(BrowserExecutor),
                 Arc::new(DevExecutor),
-                Arc::new(McpExecutor),
                 Arc::new(ProviderExecutor),
             ],
         })
     }
 
-    pub async fn submit_chat(
+    pub fn submit_chat(
         &self,
         message: String,
         locale: Option<String>,
-    ) -> Result<ChatResponse, String> {
-        self.process_message(message, locale, "user").await
-    }
-
-    pub async fn inject_external_message(
-        &self,
-        message: String,
-        source: &str,
-    ) -> Result<ChatResponse, String> {
-        // 外部注入的消息默认使用英文环境并标记来源
-        self.process_message(message, Some("en-US".to_string()), source).await
-    }
-
-    async fn process_message(
-        &self,
-        message: String,
-        locale: Option<String>,
-        source: &str,
     ) -> Result<ChatResponse, String> {
         let locale = normalize_locale(locale.as_deref());
-        
-        // 1. Architect Phase: Decide route and build initial plan
-        let mut decision = self.build_decision(&message)?;
-        let mut task = self.create_task(&message)?;
-        task.source = source.to_string();
-        
-        // 2. Initial Persist
-        let plan_steps = TaskService::build_plan(&task);
-        self.persist_new_task(&task, &decision, &plan_steps)?;
+        let decision = self.build_decision(&message)?;
+        let task = self.create_task(&message)?;
+        let plan = TaskService::build_plan(&task);
+
+        self.persist_new_task(&task, &decision, &plan)?;
         self.update_last_brain_route(decision.route.as_str())?;
 
-        // 3. Approval Check
         if requires_approval(&task.risk_level) {
-            return self.queue_approval(task, locale, plan_steps);
+            return self.queue_approval(task, locale, plan);
         }
 
-        // 4. Multi-Step Execution Loop (Orchestration Pattern)
-        let mut final_reply = String::new();
-        let mut all_audits = Vec::new();
-
-        for step in &plan_steps {
-            println!("🔄 Executing step: {} - {}", step.id, step.title);
-            
-            // 根据步骤的任务类型动态调整决策路由
-            let step_decision = BrainDecision {
-                route: nexus_brain::BrainRoute::Unknown, // Will be resolved by dispatcher
-                confidence: 1.0,
-                reason: format!("Executing planned step: {}", step.title),
-                plan: None,
-            };
-
-            let result = self.dispatch_execution(ExecutionContext {
-                task: task.clone(),
-                prompt: format!("{} - {}", step.title, step.detail),
-                approval: None,
-                decision: step_decision,
-            }).await?;
-
-            final_reply.push_str(&result.reply);
-            final_reply.push_str("\n\n");
-            all_audits.extend(result.audits);
-            
-            // 这里可以增加状态检查：如果某一步失败，则中断计划并反思
-        }
+        let request = self.build_execution_request(&task, &message, &decision, None)?;
+        let result = self.dispatch_execution(ExecutionContext {
+            task,
+            prompt: message,
+            approval: None,
+            decision,
+            request,
+        })?;
 
         Ok(ChatResponse {
-            task,
-            reply: final_reply.trim().to_owned(),
-            approval: None,
-            plan: plan_steps,
-            audits: all_audits,
+            task: result.task,
+            reply: result.reply,
+            approval: result.approval,
+            plan: result.plan,
+            audits: result.audits,
+            execution_request: Some(result.request),
+            execution_result: Some(result.structured),
         })
+    }
+
+    pub fn inject_external_message(
+        &self,
+        message: String,
+        _source: &str,
+    ) -> Result<ChatResponse, String> {
+        self.submit_chat(message, Some("en-US".to_string()))
+    }
+
+    pub fn list_skills(&self) -> Result<Vec<nexus_skill::Skill>, String> {
+        let mut manager = self
+            .skill_manager
+            .lock()
+            .map_err(|_| "skill manager lock poisoned".to_owned())?;
+        manager.scan().map_err(|err| err.to_string())
+    }
+
+    pub fn list_mcp_servers(&self) -> Result<Vec<nexus_mcp::McpServerDescriptor>, String> {
+        Ok(vec![])
     }
 
     pub fn list_pending_approvals(&self) -> Result<Vec<ApprovalRecord>, String> {
@@ -348,6 +421,50 @@ impl AppRuntime {
             .map_err(|err| err.to_string())
     }
 
+    pub fn get_latest_execution_snapshot(&self) -> Result<Option<ExecutionSnapshot>, String> {
+        let snapshot = self
+            .lock_store()?
+            .latest_structured_execution_result()
+            .map_err(|err| err.to_string())?;
+        snapshot.map(|(request_json, result_json)| parse_execution_snapshot(&request_json, &result_json)).transpose()
+    }
+
+    pub fn list_automations(&self) -> Result<Vec<AutomationView>, String> {
+        self.lock_store()?
+            .list_automations()
+            .map(|items| items.into_iter().map(AutomationView::from).collect())
+            .map_err(|err| err.to_string())
+    }
+
+    pub fn create_automation(&self, title: String, description: String) -> Result<AutomationView, String> {
+        self.lock_store()?
+            .create_automation(&title, &description)
+            .map(AutomationView::from)
+            .map_err(|err| err.to_string())
+    }
+
+    pub fn set_automation_enabled(&self, automation_id: Uuid, enabled: bool) -> Result<Vec<AutomationView>, String> {
+        let store = self.lock_store()?;
+        store
+            .set_automation_enabled(automation_id, enabled)
+            .map_err(|err| err.to_string())?;
+        store
+            .list_automations()
+            .map(|items| items.into_iter().map(AutomationView::from).collect())
+            .map_err(|err| err.to_string())
+    }
+
+    pub fn delete_automation(&self, automation_id: Uuid) -> Result<Vec<AutomationView>, String> {
+        let store = self.lock_store()?;
+        store
+            .delete_automation(automation_id)
+            .map_err(|err| err.to_string())?;
+        store
+            .list_automations()
+            .map(|items| items.into_iter().map(AutomationView::from).collect())
+            .map_err(|err| err.to_string())
+    }
+
     pub fn list_executors(&self) -> Vec<ExecutorDescriptor> {
         self.executors
             .iter()
@@ -363,21 +480,12 @@ impl AppRuntime {
         list_patch_runner_catalog()
     }
 
+    pub fn list_dev_modes(&self) -> Vec<DevModeDescriptor> {
+        list_dev_mode_catalog()
+    }
+
     pub fn list_providers(&self) -> Result<Vec<ProviderDescriptor>, String> {
         list_provider_catalog(&ProviderConfig::from_env()).map_err(|err| err.to_string())
-    }
-
-    pub fn list_skills(&self) -> Result<Vec<nexus_skill::Skill>, String> {
-        let mut manager = self
-            .skill_manager
-            .lock()
-            .map_err(|_| "skill manager lock poisoned".to_owned())?;
-        manager.scan().map_err(|err| err.to_string())
-    }
-
-    pub fn list_mcp_servers(&self) -> Result<Vec<nexus_mcp::McpServerDescriptor>, String> {
-        // TODO: Implement actual MCP server registry. For now returning empty list.
-        Ok(vec![])
     }
 
     pub fn get_latest_workspace(&self) -> Result<Option<TaskWorkspace>, String> {
@@ -397,7 +505,7 @@ impl AppRuntime {
         }
     }
 
-    pub async fn resolve_approval(
+    pub fn resolve_approval(
         &self,
         approval_id: String,
         approved: bool,
@@ -442,15 +550,17 @@ impl AppRuntime {
                 route: BrainRoute::ApprovalDecision,
                 confidence: 0.92,
                 reason: "execution resumed after explicit approval".to_owned(),
-                plan: None,
             };
             self.update_last_brain_route(decision.route.as_str())?;
+            let prompt = approval.payload.clone();
+            let request = self.build_execution_request(&task, &prompt, &decision, Some(approval.id))?;
             let result = self.dispatch_execution(ExecutionContext {
                 task,
-                prompt: approval.payload.clone(),
+                prompt,
                 approval: Some(approval),
                 decision,
-            }).await?;
+                request,
+            })?;
 
             return Ok(ChatResponse {
                 task: result.task,
@@ -458,6 +568,8 @@ impl AppRuntime {
                 approval: result.approval,
                 plan: result.plan,
                 audits: result.audits,
+                execution_request: Some(result.request),
+                execution_result: Some(result.structured),
             });
         }
 
@@ -486,6 +598,8 @@ impl AppRuntime {
                 store.list_task_steps(task_id).map_err(|err| err.to_string())?
             },
             audits: vec![nexus_audit::approval_resolved(task_id, approved)],
+            execution_request: None,
+            execution_result: None,
         })
     }
 
@@ -681,12 +795,11 @@ impl AppRuntime {
                 route: BrainRoute::Chat,
                 confidence: 1.0,
                 reason: "brain module disabled, fallback to chat route".to_owned(),
-                plan: None,
             })
         }
     }
 
-    async fn dispatch_execution(&self, ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+    fn dispatch_execution(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
         let executor = self
             .executors
             .iter()
@@ -695,6 +808,7 @@ impl AppRuntime {
             .ok_or_else(|| format!("no executor registered for route {}", ctx.decision.route.as_str()))?;
 
         let descriptor = executor.descriptor();
+        ctx.request.executor_id = descriptor.id.clone();
         {
             let store = self.lock_store()?;
             let audit =
@@ -702,10 +816,43 @@ impl AppRuntime {
             store.insert_audit(&audit).map_err(|err| err.to_string())?;
         }
 
-        executor.execute(self, ctx).await
+        let result = executor.execute(self, ctx)?;
+        self.persist_execution_snapshot(&result.request, &result.structured)?;
+        Ok(result)
     }
 
-    async fn run_provider_turn(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+    fn persist_execution_snapshot(
+        &self,
+        request: &ExecutionRequestView,
+        result: &StructuredExecutionResult,
+    ) -> Result<(), String> {
+        let request_json = serde_json::to_string(request).map_err(|err| err.to_string())?;
+        let result_json = serde_json::to_string(result).map_err(|err| err.to_string())?;
+        self.lock_store()?
+            .upsert_structured_execution_result(request.task_id, &request_json, &result_json)
+            .map_err(|err| err.to_string())
+    }
+
+    fn build_execution_request(
+        &self,
+        task: &TaskRecord,
+        prompt: &str,
+        decision: &BrainDecision,
+        approval_id: Option<Uuid>,
+    ) -> Result<ExecutionRequestView, String> {
+        Ok(ExecutionRequestView {
+            task_id: task.id,
+            executor_id: "pending-dispatch".to_owned(),
+            route: decision.route.as_str().to_owned(),
+            task_kind: infer_task_kind(&decision.route, prompt),
+            prompt: prompt.to_owned(),
+            risk_level: task.risk_level.clone(),
+            approval_id,
+            memory_enabled: self.is_memory_enabled()?,
+        })
+    }
+
+    fn run_provider_turn(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
         ctx.task.status = TaskStatus::Executing;
         {
             let store = self.lock_store()?;
@@ -725,7 +872,7 @@ impl AppRuntime {
                 .map_err(|_| "provider lock poisoned".to_owned())?;
             guard.clone()
         };
-        let reply = provider.reply(&provider_prompt).await.map_err(|err| err.to_string())?;
+        let reply = provider.reply(&provider_prompt).map_err(|err| err.to_string())?;
 
         ctx.task.status = TaskStatus::Completed;
         ctx.task.result_summary = Some(reply.clone());
@@ -766,16 +913,34 @@ impl AppRuntime {
             store.list_task_steps(task_id).map_err(|err| err.to_string())?
         };
 
+        let structured = build_structured_result(
+            &ctx.request,
+            "completed",
+            &reply,
+            plan.iter().map(|step| step.title.clone()).collect(),
+            vec![ExecutionArtifact {
+                kind: "provider.reply".to_owned(),
+                title: "Provider reply".to_owned(),
+                summary: provider.name().to_owned(),
+                payload: reply.clone(),
+            }],
+            &audits,
+            memory_candidates_for(&ctx.prompt, &reply, self.is_memory_enabled()?),
+            Vec::new(),
+        );
+
         Ok(ExecutionResult {
             task: ctx.task,
             reply,
             approval: ctx.approval,
             plan,
             audits,
+            request: ctx.request,
+            structured,
         })
     }
 
-    async fn run_browser_turn(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+    fn run_browser_turn(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
         let runtime = build_browser_runtime(&BrowserRuntimeConfig::from_env());
         let browser_task = parse_browser_task(&ctx.prompt, ctx.task.risk_level.clone());
         ctx.task.status = TaskStatus::Executing;
@@ -847,16 +1012,29 @@ impl AppRuntime {
             store.list_task_steps(task_id).map_err(|err| err.to_string())?
         };
 
+        let structured = build_structured_result(
+            &ctx.request,
+            "completed",
+            &summary,
+            browser_output.transcript.clone(),
+            browser_artifacts(&browser_output),
+            &audits,
+            memory_candidates_for(&ctx.prompt, &summary, self.is_memory_enabled()?),
+            browser_output.recommended_next_actions.clone(),
+        );
+
         Ok(ExecutionResult {
             task: ctx.task,
             reply: summary,
             approval: ctx.approval,
             plan,
             audits,
+            request: ctx.request,
+            structured,
         })
     }
 
-    async fn run_dev_turn(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
+    fn run_dev_turn(&self, mut ctx: ExecutionContext) -> Result<ExecutionResult, String> {
         let runtime = build_dev_runtime();
         let dev_task = parse_dev_task(&ctx.prompt);
         ctx.task.status = TaskStatus::Executing;
@@ -871,69 +1049,6 @@ impl AppRuntime {
         }
 
         let dev_output = runtime.execute(&dev_task).map_err(|err| err.to_string())?;
-
-        // --- NEW: Real Dual-Brain Native Patching Logic ---
-        let mut patch_runner_log = dev_output.patch_runner_log.clone();
-        if !dev_task.file_targets.is_empty() {
-            let mut prompt_context = String::new();
-            prompt_context.push_str("You are Nexus Main Brain. Your task is to modify the following files according to the user's request.\n");
-            prompt_context.push_str("Output ONLY valid SEARCH/REPLACE blocks in this exact format:\n");
-            prompt_context.push_str("<<<<\npath/to/file\n====\nEXACT lines to search for\n====\nReplacement lines\n>>>>\n\n");
-            prompt_context.push_str(&format!("User request: {}\n\n", ctx.prompt));
-
-            for target in &dev_task.file_targets {
-                if let Ok(content) = std::fs::read_to_string(target) {
-                    prompt_context.push_str(&format!("File: {}\n```\n{}\n```\n\n", target, content));
-                }
-            }
-
-            // Execute via Main Brain
-            let provider = {
-                let guard = self.provider.lock().map_err(|_| "provider lock poisoned".to_owned())?;
-                guard.clone()
-            };
-            if let Ok(reply) = provider.reply(&prompt_context).await {
-                patch_runner_log.push("Received code modifications from Main Brain.".to_owned());
-                // Simple SEARCH/REPLACE block parser
-                let mut current_file = String::new();
-                let mut search_block = String::new();
-                let mut replace_block = String::new();
-                let mut state = 0; // 0: outside, 1: file, 2: search, 3: replace
-
-                for line in reply.lines() {
-                    if line == "<<<<" { state = 1; current_file.clear(); search_block.clear(); replace_block.clear(); continue; }
-                    if line == "====" { state += 1; continue; }
-                    if line == ">>>>" {
-                        state = 0;
-                        if !current_file.is_empty() && !search_block.is_empty() {
-                            if let Ok(content) = std::fs::read_to_string(&current_file) {
-                                let new_content = content.replace(&search_block, &replace_block);
-                                if new_content != content {
-                                    if std::fs::write(&current_file, new_content).is_ok() {
-                                        patch_runner_log.push(format!("Successfully patched {}", current_file));
-                                    } else {
-                                        patch_runner_log.push(format!("Failed to write {}", current_file));
-                                    }
-                                } else {
-                                    patch_runner_log.push(format!("Search block not found in {}", current_file));
-                                }
-                            }
-                        }
-                        continue;
-                    }
-
-                    match state {
-                        1 => current_file = line.trim().to_owned(),
-                        2 => { search_block.push_str(line); search_block.push('\n'); },
-                        3 => { replace_block.push_str(line); replace_block.push('\n'); },
-                        _ => {}
-                    }
-                }
-            } else {
-                patch_runner_log.push("Main Brain failed to generate a response.".to_owned());
-            }
-        }
-        // ---------------------------------------------------
         let plan_audit = nexus_audit::dev_plan_saved(
             ctx.task.id,
             &format!(
@@ -979,11 +1094,11 @@ impl AppRuntime {
                 "runner_id={}; mode={}; log={}",
                 dev_output.patch_runner_id,
                 dev_output.patch_runner_mode,
-                patch_runner_log.join(" | ")
+                dev_output.patch_runner_log.join(" | ")
             ),
         );
         let patch_runner_log_audit =
-            nexus_audit::dev_runner_log_saved(ctx.task.id, &serde_json::to_string(&patch_runner_log).unwrap_or_default());
+            nexus_audit::dev_runner_log_saved(ctx.task.id, &dev_output.patch_runner_log_json);
         let prepared = nexus_audit::dev_executor_prepared(
             ctx.task.id,
             &format!(
@@ -1050,12 +1165,25 @@ impl AppRuntime {
             store.list_task_steps(task_id).map_err(|err| err.to_string())?
         };
 
+        let structured = build_structured_result(
+            &ctx.request,
+            "completed",
+            &summary,
+            dev_output.transcript.clone(),
+            dev_artifacts(&dev_output),
+            &audits,
+            memory_candidates_for(&ctx.prompt, &summary, self.is_memory_enabled()?),
+            dev_output.recommended_steps.clone(),
+        );
+
         Ok(ExecutionResult {
             task: ctx.task,
             reply: summary,
             approval: ctx.approval,
             plan,
             audits,
+            request: ctx.request,
+            structured,
         })
     }
 
@@ -1139,6 +1267,8 @@ impl AppRuntime {
             approval: Some(approval),
             plan,
             audits: vec![approval_audit],
+            execution_request: None,
+            execution_result: None,
         })
     }
 
@@ -1185,7 +1315,7 @@ fn clip_text(raw: &str, cap: usize) -> String {
 
 fn is_browser_prompt(prompt: &str) -> bool {
     let lower = prompt.to_lowercase();
-    if ["浏览器", "网页", "网站", "页面", "登录", "表单"]
+    if ["娴忚鍣?, "缃戦〉", "缃戠珯", "椤甸潰", "鐧诲綍", "琛ㄥ崟"]
         .iter()
         .any(|token| prompt.contains(token))
     {
@@ -1202,12 +1332,12 @@ fn is_browser_prompt(prompt: &str) -> bool {
         "https://",
         "login",
         "form",
-        "浏览器",
-        "网页",
-        "网站",
-        "页面",
-        "登录",
-        "表单",
+        "娴忚鍣?,
+        "缃戦〉",
+        "缃戠珯",
+        "椤甸潰",
+        "鐧诲綍",
+        "琛ㄥ崟",
     ]
     .iter()
     .any(|token| lower.contains(token))
@@ -1216,15 +1346,15 @@ fn is_browser_prompt(prompt: &str) -> bool {
 fn is_dev_prompt(prompt: &str) -> bool {
     let lower = prompt.to_lowercase();
     if [
-        "代码",
-        "开发",
-        "修复",
-        "重构",
-        "实现",
-        "看代码",
-        "补丁",
-        "测试",
-        "验证",
+        "浠ｇ爜",
+        "寮€鍙?,
+        "淇",
+        "閲嶆瀯",
+        "瀹炵幇",
+        "鐪嬩唬鐮?,
+        "琛ヤ竵",
+        "娴嬭瘯",
+        "楠岃瘉",
     ]
     .iter()
     .any(|token| prompt.contains(token))
@@ -1346,6 +1476,98 @@ fn build_browser_extraction_audit(
 }
 
 
+fn parse_execution_snapshot(
+    request_json: &str,
+    result_json: &str,
+) -> Result<ExecutionSnapshot, String> {
+    Ok(ExecutionSnapshot {
+        execution_request: serde_json::from_str(request_json).map_err(|err| err.to_string())?,
+        execution_result: serde_json::from_str(result_json).map_err(|err| err.to_string())?,
+    })
+}
+fn build_structured_result(
+    request: &ExecutionRequestView,
+    status: &str,
+    summary: &str,
+    steps: Vec<String>,
+    artifacts: Vec<ExecutionArtifact>,
+    audits: &[AuditRecord],
+    memory_candidates: Vec<String>,
+    follow_up_suggestions: Vec<String>,
+) -> StructuredExecutionResult {
+    StructuredExecutionResult {
+        executor_id: request.executor_id.clone(),
+        status: status.to_owned(),
+        summary: summary.to_owned(),
+        risk_level: request.risk_level.clone(),
+        steps,
+        artifacts,
+        audit_refs: audits.iter().map(|audit| audit.id).collect(),
+        memory_candidates,
+        follow_up_suggestions,
+    }
+}
+
+fn memory_candidates_for(prompt: &str, summary: &str, enabled: bool) -> Vec<String> {
+    if enabled {
+        vec![format!("intent: {}; outcome: {}", prompt, summary)]
+    } else {
+        Vec::new()
+    }
+}
+
+fn infer_task_kind(route: &BrainRoute, prompt: &str) -> String {
+    if matches!(route, BrainRoute::TaskExecution) && is_browser_prompt(prompt) {
+        "browser.task".to_owned()
+    } else if matches!(route, BrainRoute::TaskExecution) && is_dev_prompt(prompt) {
+        "code.task".to_owned()
+    } else if matches!(route, BrainRoute::ApprovalDecision) {
+        "approval.resume".to_owned()
+    } else {
+        "chat.turn".to_owned()
+    }
+}
+
+fn browser_artifacts(output: &nexus_browser::BrowserExecutionOutput) -> Vec<ExecutionArtifact> {
+    let mut artifacts = vec![ExecutionArtifact {
+        kind: "browser.transcript".to_owned(),
+        title: "Browser transcript".to_owned(),
+        summary: output.intent.clone(),
+        payload: output.transcript.join("\n"),
+    }];
+    if let Some(snippet) = &output.text_snippet {
+        artifacts.push(ExecutionArtifact {
+            kind: "browser.extraction".to_owned(),
+            title: "Extracted page text".to_owned(),
+            summary: output.target_url.clone().unwrap_or_else(|| "no target URL".to_owned()),
+            payload: snippet.clone(),
+        });
+    }
+    artifacts
+}
+
+fn dev_artifacts(output: &nexus_dev::DevExecutionOutput) -> Vec<ExecutionArtifact> {
+    vec![
+        ExecutionArtifact {
+            kind: "dev.patch_schema".to_owned(),
+            title: "Patch schema".to_owned(),
+            summary: output.patch_schema_version.clone(),
+            payload: output.patch_schema_json.clone(),
+        },
+        ExecutionArtifact {
+            kind: "dev.patch_plan".to_owned(),
+            title: "Patch plan".to_owned(),
+            summary: output.patch_strategy.clone(),
+            payload: output.patch_proposal.join("\n"),
+        },
+        ExecutionArtifact {
+            kind: "dev.verification".to_owned(),
+            title: "Verification targets".to_owned(),
+            summary: output.verification_targets.join(" | "),
+            payload: output.verification_plan.join("\n"),
+        },
+    ]
+}
 pub fn resolve_risk_policy_path(explicit: Option<String>) -> Option<PathBuf> {
     if let Some(path) = explicit {
         return Some(PathBuf::from(path));
@@ -1365,8 +1587,8 @@ pub fn normalize_locale(raw: Option<&str>) -> &str {
 
 fn localized_text(locale: &str, key: &str) -> &'static str {
     match (locale, key) {
-        ("zh-CN", "approval_rejected") => "审批未通过，任务已取消。",
-        ("zh-CN", "queued_for_approval") => "该任务风险较高，已进入审批队列。",
+        ("zh-CN", "approval_rejected") => "瀹℃壒鏈€氳繃锛屼换鍔″凡鍙栨秷銆?,
+        ("zh-CN", "queued_for_approval") => "璇ヤ换鍔￠闄╄緝楂橈紝宸茶繘鍏ュ鎵归槦鍒椼€?,
         _ if key == "approval_rejected" => "Approval rejected. Task has been cancelled.",
         _ if key == "queued_for_approval" => {
             "Task is queued for approval because the request is high risk."
@@ -1378,8 +1600,8 @@ fn localized_text(locale: &str, key: &str) -> &'static str {
 #[allow(dead_code, unreachable_patterns)]
 fn localize(locale: &str, key: &str) -> &'static str {
     match (locale, key) {
-        ("zh-CN", "approval_rejected") => "审批未通过，任务已取消。",
-        ("zh-CN", "queued_for_approval") => "该任务风险较高，已进入审批队列。",
+        ("zh-CN", "approval_rejected") => "瀹℃壒鏈€氳繃锛屼换鍔″凡鍙栨秷銆?,
+        ("zh-CN", "queued_for_approval") => "璇ヤ换鍔￠闄╄緝楂橈紝宸茶繘鍏ュ鎵归槦鍒椼€?,
         _ if key == "approval_rejected" => "Approval rejected. Task has been cancelled.",
         _ if key == "queued_for_approval" => {
             "Task is queued for approval because the request is high risk."
@@ -1387,3 +1609,14 @@ fn localize(locale: &str, key: &str) -> &'static str {
         _ => "",
     }
 }
+
+
+
+
+
+
+
+
+
+
+

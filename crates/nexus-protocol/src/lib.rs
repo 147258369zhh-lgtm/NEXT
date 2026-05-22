@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+﻿use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -107,11 +107,4 @@ pub struct ChatRequest {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatResponse {
-    pub task: TaskRecord,
-    pub reply: String,
-    pub approval: Option<ApprovalRecord>,
-    pub plan: Vec<TaskStepRecord>,
-    pub audits: Vec<AuditRecord>,
-}
+
